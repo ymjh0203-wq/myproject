@@ -1,0 +1,38 @@
+[client]
+# 개발자용 메뉴/단축키(재실행 r, 캐시지우기 c 등)를 숨깁니다.
+# Ctrl+C로 텍스트를 복사하려다 "Clear caches" 창이 뜨는 것을 막기 위함입니다.
+toolbarMode = "viewer"
+
+# ----------------------------------------------------------
+# 화면 모양 설정
+# ----------------------------------------------------------
+# 샵마인처럼 한 화면에 정보가 많이 들어가도록 글자와 여백을 촘촘하게 줄였습니다.
+# (Streamlit 기본값은 글자 16px에 여백이 넓어서, 업무용 표를 보기엔 헐렁합니다)
+[theme]
+base = "light"
+
+# 글자 크기: 기본 16px -> 13px
+baseFontSize = 13
+baseFontWeight = 400
+# 제목도 같이 줄여서 화면을 덜 차지하게 합니다 (h1~h6)
+headingFontSizes = ["24px", "20px", "17px", "15px", "13px", "12px"]
+headingFontWeights = [700, 700, 600, 600, 600, 600]
+codeFontSize = "12px"
+
+# 업무용 프로그램 느낌이 나도록 모서리를 각지게
+baseRadius = "small"
+buttonRadius = "small"
+showWidgetBorder = true
+
+# 색: 흰 배경 + 파란 강조 (샵마인의 파란 버튼/링크와 비슷하게)
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f2f4f7"
+textColor = "#1f2937"
+borderColor = "#d5d9e0"
+linkColor = "#1d4ed8"
+linkUnderline = false
+
+# 표(데이터프레임) 머리글을 회색으로 구분
+dataframeHeaderBackgroundColor = "#eef1f5"
+dataframeBorderColor = "#d5d9e0"

@@ -1,0 +1,809 @@
+<title>쿠팡 황금상품 발굴 프로그램 — 이해하기 쉬운 설명서</title>
+<style>
+  @font-face {
+    font-family: "UIMono";
+    src: local("SF Mono"), local("Cascadia Code"), local("Consolas");
+  }
+
+  :root {
+    --bg: #f6f4ee;
+    --surface: #ffffff;
+    --surface-2: #efece2;
+    --ink: #1e2438;
+    --ink-soft: #5b6178;
+    --ink-faint: #8b90a3;
+    --gold: #a3781f;
+    --gold-strong: #8a6418;
+    --gold-bg: #f3e6c8;
+    --teal: #1f6b64;
+    --teal-bg: #dcece7;
+    --line: #e3dfd2;
+    --line-strong: #cfc9b8;
+    --rust: #a34a34;
+    --rust-bg: #f2ddd4;
+    --slate: #4a5578;
+    --slate-bg: #e3e6f0;
+    --radius: 10px;
+    --serif-num: "UIMono", "SF Mono", "Cascadia Code", Consolas, monospace;
+    --font: "Apple SD Gothic Neo", "Malgun Gothic", "Pretendard", -apple-system,
+      "Segoe UI", system-ui, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161f;
+      --surface: #1b1e29;
+      --surface-2: #20232f;
+      --ink: #ede9df;
+      --ink-soft: #a7acc2;
+      --ink-faint: #767b93;
+      --gold: #e0ae55;
+      --gold-strong: #f0c476;
+      --gold-bg: #3a2f17;
+      --teal: #5cb3a6;
+      --teal-bg: #16302c;
+      --line: #2a2d3b;
+      --line-strong: #3a3e4f;
+      --rust: #d98567;
+      --rust-bg: #3a231c;
+      --slate: #9aa4d4;
+      --slate-bg: #232748;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161f;
+    --surface: #1b1e29;
+    --surface-2: #20232f;
+    --ink: #ede9df;
+    --ink-soft: #a7acc2;
+    --ink-faint: #767b93;
+    --gold: #e0ae55;
+    --gold-strong: #f0c476;
+    --gold-bg: #3a2f17;
+    --teal: #5cb3a6;
+    --teal-bg: #16302c;
+    --line: #2a2d3b;
+    --line-strong: #3a3e4f;
+    --rust: #d98567;
+    --rust-bg: #3a231c;
+    --slate: #9aa4d4;
+    --slate-bg: #232748;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f4ee;
+    --surface: #ffffff;
+    --surface-2: #efece2;
+    --ink: #1e2438;
+    --ink-soft: #5b6178;
+    --ink-faint: #8b90a3;
+    --gold: #a3781f;
+    --gold-strong: #8a6418;
+    --gold-bg: #f3e6c8;
+    --teal: #1f6b64;
+    --teal-bg: #dcece7;
+    --line: #e3dfd2;
+    --line-strong: #cfc9b8;
+    --rust: #a34a34;
+    --rust-bg: #f2ddd4;
+    --slate: #4a5578;
+    --slate-bg: #e3e6f0;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; }
+
+  .page {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    line-height: 1.7;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 760px);
+    gap: 56px;
+    justify-content: center;
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 64px 24px 120px;
+  }
+  @media (max-width: 880px) {
+    .shell { grid-template-columns: minmax(0, 1fr); padding: 32px 18px 80px; }
+    .rail { display: none; }
+  }
+
+  .rail {
+    position: sticky;
+    top: 32px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 13px;
+  }
+  .rail a {
+    color: var(--ink-faint);
+    text-decoration: none;
+    padding: 6px 0 6px 14px;
+    border-left: 2px solid var(--line);
+    transition: color .15s, border-color .15s;
+  }
+  .rail a:hover { color: var(--ink); border-color: var(--line-strong); }
+  .rail .rail-title {
+    color: var(--ink-faint);
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding-left: 14px;
+    margin-bottom: 10px;
+  }
+
+  main { min-width: 0; }
+
+  h1, h2, h3 { text-wrap: balance; font-weight: 800; }
+
+  .masthead { margin-bottom: 56px; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--serif-num);
+    font-size: 12px;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--gold);
+    background: var(--gold-bg);
+    padding: 5px 12px;
+    border-radius: 999px;
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 38px);
+    line-height: 1.25;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    font-size: 17px;
+    color: var(--ink-soft);
+    margin: 0 0 28px;
+    max-width: 62ch;
+  }
+  .program-pills { display: flex; flex-wrap: wrap; gap: 10px; }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink-soft);
+  }
+  .pill b { color: var(--ink); font-weight: 700; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 50%; }
+
+  section { margin-top: 68px; scroll-margin-top: 24px; }
+  section:first-of-type { margin-top: 0; }
+
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  .sec-num {
+    font-family: var(--serif-num);
+    font-size: 13px;
+    color: var(--gold);
+    font-weight: 700;
+  }
+  h2 { font-size: 22px; margin: 0; }
+  .sec-sub { color: var(--ink-soft); font-size: 15px; margin: 10px 0 28px; max-width: 62ch; }
+
+  p { margin: 0 0 16px; }
+  strong { font-weight: 700; }
+  .muted { color: var(--ink-soft); }
+
+  code, .code {
+    font-family: var(--serif-num);
+    font-size: 0.88em;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    padding: 1.5px 6px;
+    white-space: nowrap;
+  }
+
+  /* ---- diagram ---- */
+  .diagram-wrap {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 20px;
+    margin: 22px 0 8px;
+  }
+  .diagram-caption {
+    font-size: 13px;
+    color: var(--ink-faint);
+    margin: 10px 0 0;
+  }
+  .flow-svg-text {
+    font-family: var(--font);
+  }
+
+  /* ---- program cards ---- */
+  .program-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+    margin: 22px 0 8px;
+  }
+  @media (max-width: 620px) { .program-grid { grid-template-columns: 1fr; } }
+  .pcard {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px;
+  }
+  .pcard .ptag {
+    font-family: var(--serif-num);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--teal);
+    background: var(--teal-bg);
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    margin-bottom: 12px;
+  }
+  .pcard h3 { font-size: 17px; margin: 0 0 6px; }
+  .pcard .file { font-family: var(--serif-num); font-size: 13px; color: var(--ink-faint); margin-bottom: 14px; }
+  .pcard ul { margin: 0; padding-left: 18px; font-size: 14.5px; color: var(--ink-soft); }
+  .pcard li { margin-bottom: 6px; }
+
+  /* ---- timeline ---- */
+  .timeline { border-left: 2px solid var(--line-strong); margin: 24px 0 8px 8px; padding-left: 26px; }
+  .tl-item { position: relative; padding-bottom: 30px; }
+  .tl-item:last-child { padding-bottom: 0; }
+  .tl-item::before {
+    content: "";
+    position: absolute;
+    left: -33px;
+    top: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--gold);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 0 2px var(--gold);
+  }
+  .tl-phase {
+    font-family: var(--serif-num);
+    font-size: 12px;
+    color: var(--gold);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .tl-item h3 { font-size: 16px; margin: 0 0 6px; }
+  .tl-item p { font-size: 14.5px; color: var(--ink-soft); margin: 0; }
+
+  /* ---- file map ---- */
+  .filemap { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 22px 0 8px; }
+  .frow { display: grid; grid-template-columns: 200px 1fr; gap: 14px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); align-items: baseline; }
+  .frow:last-child { border-bottom: none; }
+  .frow:nth-child(even) { background: var(--surface-2); }
+  .fname { font-family: var(--serif-num); font-size: 13.5px; color: var(--ink); font-weight: 700; }
+  .fdesc { font-size: 14px; color: var(--ink-soft); }
+  .fgroup-label {
+    font-family: var(--serif-num);
+    font-size: 11px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    padding: 10px 16px 4px;
+    background: var(--surface);
+  }
+
+  /* ---- grade badges ---- */
+  .grade-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 22px 0 8px; }
+  @media (max-width: 620px) { .grade-grid { grid-template-columns: 1fr 1fr; } }
+  .grade-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; background: var(--surface); }
+  .grade-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px; height: 34px;
+    border-radius: 8px;
+    font-family: var(--serif-num);
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 10px;
+  }
+  .grade-s .grade-badge { background: var(--gold-bg); color: var(--gold-strong); }
+  .grade-a .grade-badge { background: var(--teal-bg); color: var(--teal); }
+  .grade-b .grade-badge { background: var(--slate-bg); color: var(--slate); }
+  .grade-c .grade-badge { background: var(--rust-bg); color: var(--rust); }
+  .grade-card p { font-size: 13.5px; color: var(--ink-soft); margin: 0; }
+
+  /* ---- concept glossary ---- */
+  .glossary { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 22px 0 8px; }
+  @media (max-width: 620px) { .glossary { grid-template-columns: 1fr; } }
+  .gterm {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .gterm .gname { font-weight: 700; font-size: 15px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .gterm .ganalogy {
+    font-size: 12.5px;
+    color: var(--teal);
+    background: var(--teal-bg);
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .gterm p { font-size: 14px; color: var(--ink-soft); margin: 0; }
+
+  /* ---- callout ---- */
+  .callout {
+    border: 1px solid var(--line-strong);
+    border-left: 3px solid var(--gold);
+    background: var(--gold-bg);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    padding: 16px 20px;
+    margin: 22px 0;
+    font-size: 14.5px;
+  }
+  .callout.warn { border-left-color: var(--rust); background: var(--rust-bg); }
+  .callout b { display: block; margin-bottom: 4px; font-size: 13.5px; letter-spacing: .02em; }
+
+  /* ---- quick ref table ---- */
+  .qref { width: 100%; border-collapse: collapse; font-size: 14px; margin: 22px 0 8px; }
+  .qref th, .qref td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .qref th { color: var(--ink-faint); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+  .qref td.cmd { font-family: var(--serif-num); }
+  .qref-wrap { overflow-x: auto; }
+
+  footer { margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: 13px; }
+</style>
+
+<div class="page">
+  <div class="shell">
+    <nav class="rail">
+      <div class="rail-title">목차</div>
+      <a href="#overview">01 전체 그림</a>
+      <a href="#program-a">02 크무비 검증</a>
+      <a href="#program-b">03 키워드 발굴</a>
+      <a href="#timeline">04 만들어진 순서</a>
+      <a href="#filemap">05 파일 지도</a>
+      <a href="#grading">06 등급 읽는 법</a>
+      <a href="#concepts">07 용어 쉽게 알기</a>
+      <a href="#limits">08 한계와 주의사항</a>
+      <a href="#quickref">09 빠른 사용법</a>
+    </nav>
+
+    <main>
+      <div class="masthead">
+        <div class="eyebrow">★ 프로그램 설명서</div>
+        <h1>쿠팡 황금상품 발굴 프로그램,<br>무엇을 어떻게 만들었나</h1>
+        <p class="lede">
+          중국에서 소싱해 쿠팡에 파는 "크무비(크고·무겁고·객단가 높은)" 상품을 자동으로
+          찾아주는 도구예요. 프로그램은 두 개, 서로 이어지는 흐름이고,
+          전부 네이버 공식 API 위에서 돌아갑니다. 아래에서 코딩을 몰라도
+          전체 그림이 잡히도록 순서대로 설명할게요.
+        </p>
+        <div class="program-pills">
+          <span class="pill"><span class="dot" style="background:var(--teal)"></span><b>find_keywords.py</b>&nbsp;— 유망 키워드 발굴</span>
+          <span class="pill"><span class="dot" style="background:var(--gold)"></span><b>main.py</b>&nbsp;— 실제 상품 크무비 검증</span>
+        </div>
+      </div>
+
+      <!-- 01 전체 그림 -->
+      <section id="overview">
+        <div class="sec-head"><span class="sec-num">01</span><h2>전체 그림</h2></div>
+        <p class="sec-sub">두 프로그램은 순서가 있어요. 하나가 "어디를 파볼지" 찾아주면, 다른 하나가 "진짜 괜찮은지" 검증합니다.</p>
+
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 700 300" width="100%" style="min-width:600px" class="flow-svg-text">
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-faint)" />
+              </marker>
+            </defs>
+
+            <!-- step 1 -->
+            <rect x="10" y="30" width="150" height="60" rx="10" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"/>
+            <text x="85" y="55" text-anchor="middle" font-size="12" fill="var(--teal)" font-weight="700">1. 키워드 발굴</text>
+            <text x="85" y="74" text-anchor="middle" font-size="11" fill="var(--ink-soft)">find_keywords.py</text>
+
+            <line x1="160" y1="60" x2="205" y2="60" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- step 2 -->
+            <rect x="210" y="30" width="150" height="60" rx="10" fill="var(--gold-bg)" stroke="var(--gold)" stroke-width="1.5"/>
+            <text x="285" y="55" text-anchor="middle" font-size="12" fill="var(--gold-strong)" font-weight="700">2. 사람이 직접</text>
+            <text x="285" y="74" text-anchor="middle" font-size="11" fill="var(--ink-soft)">실제 상품 소싱 조사</text>
+
+            <line x1="360" y1="60" x2="405" y2="60" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- step 3 -->
+            <rect x="410" y="30" width="150" height="60" rx="10" fill="var(--surface)" stroke="var(--teal)" stroke-width="1.5"/>
+            <text x="485" y="55" text-anchor="middle" font-size="12" fill="var(--teal)" font-weight="700">3. 상품 정보 입력</text>
+            <text x="485" y="74" text-anchor="middle" font-size="11" fill="var(--ink-soft)">products_template.csv</text>
+
+            <line x1="560" y1="60" x2="605" y2="60" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- step 4 -->
+            <rect x="530" y="120" width="150" height="60" rx="10" fill="var(--surface)" stroke="var(--gold)" stroke-width="1.5"/>
+            <text x="605" y="145" text-anchor="middle" font-size="12" fill="var(--gold-strong)" font-weight="700">4. 크무비 검증</text>
+            <text x="605" y="164" text-anchor="middle" font-size="11" fill="var(--ink-soft)">main.py</text>
+
+            <path d="M610,90 C610,105 610,105 610,118" stroke="var(--ink-faint)" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+            <line x1="530" y1="150" x2="405" y2="150" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+            <!-- step 5 result -->
+            <rect x="245" y="120" width="160" height="60" rx="10" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.5"/>
+            <text x="325" y="145" text-anchor="middle" font-size="12" fill="var(--ink)" font-weight="700">5. 최종 결과</text>
+            <text x="325" y="164" text-anchor="middle" font-size="11" fill="var(--ink-soft)">골든상품_결과.csv</text>
+
+            <!-- caption row -->
+            <text x="85" y="115" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">"어디를 파볼지" 찾기</text>
+            <text x="605" y="200" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">"진짜 괜찮은지" 확인</text>
+
+            <line x1="85" y1="220" x2="605" y2="220" stroke="var(--line)" stroke-width="1" stroke-dasharray="3 4"/>
+            <text x="20" y="245" font-size="11.5" fill="var(--ink-soft)">이 프로그램이 자동으로 하는 것</text>
+            <rect x="15" y="255" width="12" height="12" rx="3" fill="var(--teal-bg)" stroke="var(--teal)"/>
+            <text x="35" y="264" font-size="11" fill="var(--ink-soft)">자동 (API 조회 + 점수 계산)</text>
+            <rect x="220" y="255" width="12" height="12" rx="3" fill="var(--gold-bg)" stroke="var(--gold)"/>
+            <text x="240" y="264" font-size="11" fill="var(--ink-soft)">사람이 직접 판단해야 하는 부분</text>
+          </svg>
+          <p class="diagram-caption">키워드 발굴 → (사람이 직접 소싱 조사) → 정보 입력 → 크무비 검증, 총 5단계 흐름</p>
+        </div>
+
+        <p>
+          핵심은 <strong>2번 단계는 프로그램이 대신 못 해준다</strong>는 점이에요. 실제 상품의
+          크기·무게·판매가는 1688/타오바오 같은 중국 소싱 사이트에만 있는 정보라서,
+          사장님이 직접 조사해서 입력해야 그다음 검증이 가능합니다.
+        </p>
+      </section>
+
+      <!-- 02 크무비 검증 -->
+      <section id="program-a">
+        <div class="sec-head"><span class="sec-num">02</span><h2>크무비 검증 — main.py</h2></div>
+        <p class="sec-sub">사장님이 직접 조사한 상품이 진짜 "크무비" 조건에 맞는지 계산해서 점수 매기는 프로그램이에요.</p>
+
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 700 130" width="100%" style="min-width:600px" class="flow-svg-text">
+            <defs>
+              <marker id="arrow2" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-faint)" />
+              </marker>
+            </defs>
+            <rect x="0" y="35" width="120" height="55" rx="9" fill="var(--surface)" stroke="var(--line-strong)"/>
+            <text x="60" y="58" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="700">상품 정보</text>
+            <text x="60" y="74" text-anchor="middle" font-size="10" fill="var(--ink-soft)">가로·세로·높이·무게·가격</text>
+
+            <line x1="120" y1="62" x2="150" y2="62" stroke="var(--ink-faint)" marker-end="url(#arrow2)"/>
+
+            <rect x="155" y="35" width="120" height="55" rx="9" fill="var(--rust-bg)" stroke="var(--rust)"/>
+            <text x="215" y="58" text-anchor="middle" font-size="11" fill="var(--rust)" font-weight="700">제외키워드</text>
+            <text x="215" y="74" text-anchor="middle" font-size="10" fill="var(--ink-soft)">브랜드·금지품목 필터</text>
+
+            <line x1="275" y1="62" x2="305" y2="62" stroke="var(--ink-faint)" marker-end="url(#arrow2)"/>
+
+            <rect x="310" y="35" width="120" height="55" rx="9" fill="var(--gold-bg)" stroke="var(--gold)"/>
+            <text x="370" y="53" text-anchor="middle" font-size="11" fill="var(--gold-strong)" font-weight="700">크무비 필터</text>
+            <text x="370" y="68" text-anchor="middle" font-size="10" fill="var(--ink-soft)">200cm·20kg·20만~100만원</text>
+            <text x="370" y="80" text-anchor="middle" font-size="10" fill="var(--ink-soft)">전부 만족해야 통과</text>
+
+            <line x1="430" y1="62" x2="460" y2="62" stroke="var(--ink-faint)" marker-end="url(#arrow2)"/>
+
+            <rect x="465" y="35" width="120" height="55" rx="9" fill="var(--teal-bg)" stroke="var(--teal)"/>
+            <text x="525" y="58" text-anchor="middle" font-size="11" fill="var(--teal)" font-weight="700">네이버 API</text>
+            <text x="525" y="74" text-anchor="middle" font-size="10" fill="var(--ink-soft)">검색량 + 계절성 조회</text>
+
+            <line x1="585" y1="62" x2="615" y2="62" stroke="var(--ink-faint)" marker-end="url(#arrow2)"/>
+
+            <rect x="620" y="35" width="75" height="55" rx="9" fill="var(--surface)" stroke="var(--line-strong)"/>
+            <text x="657" y="58" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="700">점수</text>
+            <text x="657" y="74" text-anchor="middle" font-size="10" fill="var(--ink-soft)">100점제</text>
+          </svg>
+          <p class="diagram-caption">products_template.csv 한 줄(상품 하나)마다 이 과정을 반복합니다</p>
+        </div>
+
+        <p><span class="code">products_template.csv</span>에 상품명·검색키워드·가로·세로·높이·실중량·판매가를 한 줄씩 입력하면:</p>
+        <ol style="color:var(--ink-soft); font-size:14.5px; padding-left:20px;">
+          <li><strong>제외키워드 확인</strong> — 브랜드명이나 금지품목이 포함되어 있으면 탈락 사유를 남기고 제외</li>
+          <li><strong>크무비 조건 확인</strong> — 가로+세로+높이 200cm 이상, (실중량과 부피중량 중 큰 값) 20kg 이상, 판매가 20만~100만원, 셋 다 만족해야 통과</li>
+          <li><strong>통과한 상품만</strong> 네이버 검색광고 API로 검색량을, 데이터랩 API로 3년 계절성을 조회</li>
+          <li>검색량·계절성·가격·크무비 강도를 종합해 <strong>100점 만점 점수</strong>를 매김</li>
+        </ol>
+        <p>결과는 <span class="code">output/골든상품_결과.csv</span>에 점수 높은 순으로 저장됩니다.</p>
+      </section>
+
+      <!-- 03 키워드 발굴 -->
+      <section id="program-b">
+        <div class="sec-head"><span class="sec-num">03</span><h2>키워드 발굴 — find_keywords.py</h2></div>
+        <p class="sec-sub">아직 특정 상품이 정해지지 않았을 때, "어느 키워드를 파봐야 할지" 넓게 찾아주는 프로그램이에요. 3단계에 걸쳐 계속 기능을 붙여왔습니다.</p>
+
+        <div class="diagram-wrap">
+          <svg viewBox="0 0 700 320" width="100%" style="min-width:640px" class="flow-svg-text">
+            <defs>
+              <marker id="arrow3" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="var(--ink-faint)" />
+              </marker>
+            </defs>
+
+            <rect x="0" y="10" width="130" height="50" rx="9" fill="var(--surface)" stroke="var(--line-strong)"/>
+            <text x="65" y="30" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="700">시드 키워드</text>
+            <text x="65" y="45" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">seed_keywords.csv (37개)</text>
+
+            <line x1="65" y1="60" x2="65" y2="85" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <rect x="0" y="90" width="130" height="50" rx="9" fill="var(--teal-bg)" stroke="var(--teal)"/>
+            <text x="65" y="110" text-anchor="middle" font-size="11" fill="var(--teal)" font-weight="700">연관키워드 수집</text>
+            <text x="65" y="125" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">네이버 검색광고 API</text>
+
+            <line x1="65" y1="140" x2="65" y2="165" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <rect x="0" y="170" width="130" height="50" rx="9" fill="var(--rust-bg)" stroke="var(--rust)"/>
+            <text x="65" y="190" text-anchor="middle" font-size="11" fill="var(--rust)" font-weight="700">필터링</text>
+            <text x="65" y="205" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">금지품목 · 검색량 6천↑</text>
+
+            <line x1="130" y1="195" x2="165" y2="195" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <rect x="170" y="170" width="130" height="50" rx="9" fill="var(--surface)" stroke="var(--line-strong)"/>
+            <text x="235" y="190" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="700">계절성 조회</text>
+            <text x="235" y="205" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">데이터랩 API, 최근 3년</text>
+
+            <line x1="300" y1="195" x2="335" y2="195" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <!-- phase boxes -->
+            <rect x="340" y="20" width="150" height="55" rx="9" fill="var(--gold-bg)" stroke="var(--gold)"/>
+            <text x="415" y="40" text-anchor="middle" font-size="11" fill="var(--gold-strong)" font-weight="700">1단계 · 관련성</text>
+            <text x="415" y="55" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">진짜 관련 상품인가?</text>
+            <text x="415" y="68" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">크무비 가능성 추정</text>
+
+            <rect x="340" y="90" width="150" height="55" rx="9" fill="var(--gold-bg)" stroke="var(--gold)"/>
+            <text x="415" y="110" text-anchor="middle" font-size="11" fill="var(--gold-strong)" font-weight="700">2단계 · 소싱</text>
+            <text x="415" y="125" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">중국에서 구하기</text>
+            <text x="415" y="138" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">쉬운 상품인가?</text>
+
+            <rect x="340" y="160" width="150" height="60" rx="9" fill="var(--gold-bg)" stroke="var(--gold)"/>
+            <text x="415" y="180" text-anchor="middle" font-size="11" fill="var(--gold-strong)" font-weight="700">3단계 · 위험도</text>
+            <text x="415" y="195" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">전기·배터리·인증 등</text>
+            <text x="415" y="208" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">검토 필요 요소 확인</text>
+
+            <line x1="335" y1="195" x2="340" y2="150" stroke="var(--ink-faint)" fill="none" stroke-dasharray="0"/>
+            <path d="M335,195 C337,150 337,150 340,140" stroke="var(--ink-faint)" fill="none" marker-end="url(#arrow3)"/>
+            <line x1="415" y1="75" x2="415" y2="88" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+            <line x1="415" y1="145" x2="415" y2="158" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <line x1="490" y1="195" x2="525" y2="195" stroke="var(--ink-faint)" marker-end="url(#arrow3)"/>
+
+            <rect x="530" y="150" width="150" height="90" rx="9" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.5"/>
+            <text x="605" y="172" text-anchor="middle" font-size="11" fill="var(--ink)" font-weight="700">최종 추천 등급</text>
+            <text x="605" y="188" text-anchor="middle" font-size="10" fill="var(--ink-soft)">S · A · B · C</text>
+            <text x="605" y="210" text-anchor="middle" font-size="9.5" fill="var(--ink-soft)">결과 3개 파일로 저장</text>
+            <text x="605" y="224" text-anchor="middle" font-size="9.5" fill="var(--ink-faint)">(전체 / 추천 / 제외)</text>
+
+            <text x="65" y="285" font-size="11" fill="var(--ink-soft)">시드 키워드 하나마다 최대 100개의 연관키워드를 받아옵니다.</text>
+            <text x="65" y="303" font-size="11" fill="var(--ink-soft)">37개 시드 → 보통 1,000개 이상 수집 → 필터링 후 300개 안팎으로 정리</text>
+          </svg>
+          <p class="diagram-caption">키워드 발굴은 3단계에 걸쳐 점점 더 정교해졌어요 (아래 04번 항목 참고)</p>
+        </div>
+      </section>
+
+      <!-- 04 만들어진 순서 -->
+      <section id="timeline">
+        <div class="sec-head"><span class="sec-num">04</span><h2>만들어진 순서</h2></div>
+        <p class="sec-sub">키워드 발굴 프로그램은 한 번에 완성한 게 아니라, 실제로 써보면서 필요한 걸 하나씩 더했어요.</p>
+
+        <div class="timeline">
+          <div class="tl-item">
+            <div class="tl-phase">기초 단계</div>
+            <h3>크무비 검증 + 키워드 발굴 뼈대</h3>
+            <p>상품 정보를 입력하면 크무비 조건을 확인하는 <span class="code">main.py</span>와, 네이버 API로 검색량·계절성을 조회하는 기본 골격을 먼저 만들었어요.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-phase">1단계</div>
+            <h3>"관련 없는 키워드가 왜 나오지?" 문제 해결</h3>
+            <p>캠핑용품을 찾는데 "카드지갑", "이어폰"이 섞여 나오는 문제가 있었어요. 시드 키워드와 실제 관련이 있는지, 크무비(대형) 가능성이 있는지를 단어 사전으로 판별하는 로직을 추가했습니다.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-phase">2단계</div>
+            <h3>중국 소싱 가능성 추정</h3>
+            <p>일반 공산품·범용 소재 느낌이 있는지, 반대로 전자·식품·화장품처럼 소싱이 까다로운 신호가 있는지를 봐서 "중국에서 구하기 쉬운 상품인가"를 추정하는 기능을 더했어요.</p>
+          </div>
+          <div class="tl-item">
+            <div class="tl-phase">3단계</div>
+            <h3>위험도 분류 + 최종 등급 + 엑셀 분리 저장</h3>
+            <p>전기제품·배터리·어린이제품·인증 등 판매 전 검토가 필요한 요소를 자동으로 분류하고, 지금까지의 모든 점수를 하나로 합쳐 S/A/B/C 등급을 매기도록 했습니다. 결과도 "추천 후보"와 "제외/검토 필요"로 나눠 엑셀 두 개로 저장하도록 마무리했어요.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 05 파일 지도 -->
+      <section id="filemap">
+        <div class="sec-head"><span class="sec-num">05</span><h2>파일 지도</h2></div>
+        <p class="sec-sub">폴더 안 파일이 뭘 하는지 한눈에 정리했어요. 직접 열어볼 일은 거의 없지만, 궁금할 때 참고하세요.</p>
+
+        <div class="filemap">
+          <div class="fgroup-label">사장님이 직접 만지는 파일</div>
+          <div class="frow"><span class="fname">products_template.csv</span><span class="fdesc">크무비 검증할 상품을 직접 입력하는 표</span></div>
+          <div class="frow"><span class="fname">seed_keywords.csv</span><span class="fdesc">키워드 발굴의 출발점이 되는 대표 키워드 목록</span></div>
+          <div class="frow"><span class="fname">제외키워드.csv</span><span class="fdesc">브랜드명·금지품목 등 걸러낼 단어 목록</span></div>
+          <div class="frow"><span class="fname">config.py</span><span class="fdesc">API 키와 모든 기준값(부피·무게·가격·점수 가중치)을 모아둔 설정 파일</span></div>
+
+          <div class="fgroup-label">실행 파일 (사장님이 직접 실행)</div>
+          <div class="frow"><span class="fname">main.py</span><span class="fdesc">크무비 검증 실행 → 골든상품_결과.csv</span></div>
+          <div class="frow"><span class="fname">find_keywords.py</span><span class="fdesc">키워드 발굴 실행 → 결과 3개 파일</span></div>
+
+          <div class="fgroup-label">네이버 API 연동</div>
+          <div class="frow"><span class="fname">naver_searchad.py</span><span class="fdesc">검색광고 API — 검색량, 연관키워드 조회</span></div>
+          <div class="frow"><span class="fname">naver_datalab.py</span><span class="fdesc">데이터랩 API — 3년 계절성 조회</span></div>
+
+          <div class="fgroup-label">판정 로직</div>
+          <div class="frow"><span class="fname">filters.py</span><span class="fdesc">크무비 조건(부피·무게·가격) 계산</span></div>
+          <div class="frow"><span class="fname">blacklist_filter.py</span><span class="fdesc">제외키워드 매칭 검사</span></div>
+          <div class="frow"><span class="fname">keyword_screening.py</span><span class="fdesc">1단계 — 관련성·크무비 가능성 판별</span></div>
+          <div class="frow"><span class="fname">china_sourcing.py</span><span class="fdesc">2단계 — 중국 소싱 가능성 추정</span></div>
+          <div class="frow"><span class="fname">risk_classifier.py</span><span class="fdesc">3단계 — 위험 요소 자동 분류</span></div>
+          <div class="frow"><span class="fname">keyword_dictionaries.py</span><span class="fdesc">판별에 쓰이는 단어 사전 모음</span></div>
+          <div class="frow"><span class="fname">scorer.py</span><span class="fdesc">모든 점수·등급 계산 공식</span></div>
+
+          <div class="fgroup-label">공통 도구</div>
+          <div class="frow"><span class="fname">csv_utils.py</span><span class="fdesc">엑셀 인코딩이 달라도 자동으로 맞춰 읽기</span></div>
+          <div class="frow"><span class="fname">excel_export.py</span><span class="fdesc">추천/제외 결과를 진짜 엑셀(.xlsx) 두 파일로 저장</span></div>
+
+          <div class="fgroup-label">결과물</div>
+          <div class="frow"><span class="fname">output/골든상품_결과.csv</span><span class="fdesc">크무비 검증 결과 전체</span></div>
+          <div class="frow"><span class="fname">output/키워드발굴_결과.csv</span><span class="fdesc">키워드 발굴 결과 전체 (41개 컬럼)</span></div>
+          <div class="frow"><span class="fname">output/keyword_candidates.xlsx</span><span class="fdesc">그중 추천 후보만</span></div>
+          <div class="frow"><span class="fname">output/keyword_excluded.xlsx</span><span class="fdesc">그중 제외/검토 필요 항목만</span></div>
+        </div>
+      </section>
+
+      <!-- 06 등급 읽는 법 -->
+      <section id="grading">
+        <div class="sec-head"><span class="sec-num">06</span><h2>등급 읽는 법</h2></div>
+        <p class="sec-sub">키워드 발굴 결과의 <span class="code">추천등급</span> 컬럼은 지금까지의 모든 점수(검색량·관련성·소싱가능성·위험도)를 합친 최종 판정이에요.</p>
+
+        <div class="grade-grid">
+          <div class="grade-card grade-s">
+            <div class="grade-badge">S</div>
+            <p>점수도 높고, 관련성·소싱가능성·위험도 등 모든 조건을 충족한 최상위 후보</p>
+          </div>
+          <div class="grade-card grade-a">
+            <div class="grade-badge">A</div>
+            <p>전반적으로 양호. 검토해볼 가치가 충분한 후보</p>
+          </div>
+          <div class="grade-card grade-b">
+            <div class="grade-badge">B</div>
+            <p>보통 수준. 다른 후보와 비교해서 순위를 매길 때 참고</p>
+          </div>
+          <div class="grade-card grade-c">
+            <div class="grade-badge">C</div>
+            <p>검색량이 낮거나, 관련성·소싱가능성이 떨어지는 후보</p>
+          </div>
+        </div>
+
+        <div class="callout">
+          <b>검색량이 높아도 S가 안 나올 수 있어요</b>
+          관련성이 낮거나, 정보성 키워드(예: "~하는법")이거나, 브랜드가 섞여 있거나,
+          위험 요소가 있으면 점수가 아무리 높아도 S등급은 주지 않도록 설계했어요.
+          "그냥 검색 많이 되는 것"과 "진짜 살 만한 상품"을 구분하려는 의도예요.
+        </div>
+      </section>
+
+      <!-- 07 용어 쉽게 알기 -->
+      <section id="concepts">
+        <div class="sec-head"><span class="sec-num">07</span><h2>용어 쉽게 알기</h2></div>
+        <p class="sec-sub">코딩을 몰라도 이 프로그램을 이해하는 데 필요한 개념만 골라 쉬운 말로 풀었어요.</p>
+
+        <div class="glossary">
+          <div class="gterm">
+            <div class="gname">파이썬(Python) <span class="ganalogy">언어</span></div>
+            <p>이 프로그램을 짠 프로그래밍 언어 이름이에요. 사람이 "이거 하고, 저거 하고" 순서대로 적어두면, 컴퓨터가 그대로 실행해주는 도구라고 생각하시면 됩니다. <span class="code">.py</span>로 끝나는 파일이 전부 파이썬 코드예요.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">API <span class="ganalogy">데이터 창구</span></div>
+            <p>네이버 같은 회사가 "이 주소로 물어보면 데이터를 알려줄게요"라고 열어둔 창구예요. 저희 프로그램은 이 API를 통해 네이버에게 "이 키워드 검색량 얼마야?"라고 물어보고 답을 받아옵니다.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">함수(function) <span class="ganalogy">미니 기계</span></div>
+            <p>"입력을 넣으면 정해진 작업을 해서 결과를 내놓는" 작은 단위예요. 예를 들어 <span class="code">check_kmubi()</span>라는 함수는 상품 정보를 넣으면 크무비 조건 통과 여부를 계산해서 돌려줍니다.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">모듈(파일) <span class="ganalogy">서랍</span></div>
+            <p><span class="code">.py</span> 파일 하나하나가 관련된 함수들을 모아둔 서랍이에요. "검색량 조회" 서랍, "위험도 판별" 서랍처럼 역할별로 나눠뒀기 때문에, 하나를 고쳐도 다른 서랍은 안 건드립니다.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">CSV / xlsx <span class="ganalogy">표 파일</span></div>
+            <p>둘 다 엑셀에서 열리는 표 형식이에요. CSV는 글자만 있는 가벼운 표, xlsx는 서식·시트가 들어가는 진짜 엑셀 파일이에요. 이 프로그램은 입력도 표, 출력도 표라서 엑셀만 다룰 줄 알면 충분해요.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">설정값(config) <span class="ganalogy">조절 다이얼</span></div>
+            <p><span class="code">config.py</span> 안의 숫자들이에요. "부피 200cm 이상"의 200이라는 숫자를 바꾸고 싶으면, 코드를 고칠 필요 없이 이 숫자만 바꾸면 됩니다.</p>
+          </div>
+          <div class="gterm">
+            <div class="gname">"_추정" 컬럼 <span class="ganalogy">가장 중요</span></div>
+            <p>결과표에서 이름 끝에 "_추정"이 붙은 컬럼은 전부 <strong>단어 매칭으로 짐작한 값</strong>이에요. 실제로 조사한 사실이 아니라 참고용 힌트라는 뜻이니, 이 컬럼만 보고 최종 판단하시면 안 돼요.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 08 한계와 주의사항 -->
+      <section id="limits">
+        <div class="sec-head"><span class="sec-num">08</span><h2>한계와 주의사항</h2></div>
+        <p class="sec-sub">이 프로그램이 못 하는 것, 조심해야 할 것을 정리했어요.</p>
+
+        <div class="callout warn">
+          <b>진짜 AI가 판단하는 게 아니에요</b>
+          관련성·크무비 가능성·소싱 가능성·위험도는 전부 미리 정해둔 단어 사전과
+          문자열이 겹치는지를 보는 "규칙 기반 추정"이에요. 사전에 없는 단어는 놓칠 수 있고,
+          우연히 겹치는 단어 때문에 엉뚱하게 판정될 수도 있습니다.
+        </div>
+        <div class="callout warn">
+          <b>실제 상품 크기·무게는 절대 알 수 없어요</b>
+          키워드만 갖고는 그 키워드로 팔리는 상품이 실제로 몇 cm, 몇 kg인지 알 방법이 없어요.
+          진짜 크무비 검증은 반드시 <span class="code">main.py</span>로, 실제 상품 정보를 입력해서 하셔야 합니다.
+        </div>
+        <div class="callout warn">
+          <b>제외키워드.csv는 완전한 법정 목록이 아니에요</b>
+          해외직구 금지·제한 품목은 관세청이 정하고 계속 바뀌는데, 이 파일은 참고용 출발점일 뿐이에요.
+          실제 소싱 전엔 관세청 통관정보포털이나 관세사 확인이 꼭 필요합니다.
+        </div>
+        <div class="callout warn">
+          <b>1688·타오바오는 절대 자동으로 접속하지 않아요</b>
+          중국 쇼핑몰 크롤링이나 로그인 우회 같은 기능은 만들지 않았어요. 소싱 조사는 사장님이 직접 하셔야 합니다.
+        </div>
+        <div class="callout">
+          <b>네이버 API는 하루 호출 한도가 있어요</b>
+          특히 데이터랩(계절성)은 한도를 넘기면 그날은 조회가 막혀요. 그럴 땐 검색량 등
+          다른 정보만으로 진행되고, 다음날 한도가 초기화되면 다시 정상 작동합니다.
+        </div>
+      </section>
+
+      <!-- 09 빠른 사용법 -->
+      <section id="quickref">
+        <div class="sec-head"><span class="sec-num">09</span><h2>빠른 사용법</h2></div>
+        <p class="sec-sub">폴더 안에서 명령 프롬프트를 열고 아래처럼 실행하면 됩니다.</p>
+
+        <div class="qref-wrap">
+        <table class="qref">
+          <thead>
+            <tr><th>하고 싶은 일</th><th>준비할 파일</th><th>실행 명령어</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>유망 키워드 넓게 찾기</td>
+              <td class="code">seed_keywords.csv</td>
+              <td class="cmd">python find_keywords.py</td>
+            </tr>
+            <tr>
+              <td>실제 상품 크무비 검증</td>
+              <td class="code">products_template.csv</td>
+              <td class="cmd">python main.py</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+
+        <p class="muted" style="margin-top:20px; font-size:14px;">
+          결과 파일을 엑셀에서 열어두신 채로 다시 실행하면 저장이 안 돼요 — 재실행 전엔 꼭 닫아주세요.
+          <span class="code">find_keywords.py</span>는 실행할 때마다 "몇 월 기준으로 찾을까요?" 물어보니, 1~12 숫자로 답하시면 됩니다.
+        </p>
+      </section>
+
+      <footer>
+        쿠팡_황금상품_발굴 프로젝트 설명서 · 네이버 검색광고 API + 데이터랩 API 기반
+      </footer>
+    </main>
+  </div>
+</div>

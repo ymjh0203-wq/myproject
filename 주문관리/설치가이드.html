@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주문관리 설치 가이드</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Malgun Gothic", "맑은 고딕", system-ui, sans-serif;
+    color: #1f2937;
+    background: #eef1f5;
+    line-height: 1.7;
+    font-size: 16px;
+  }
+  .page {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+  }
+  header.hero {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    color: #fff;
+    border-radius: 14px;
+    padding: 28px 30px;
+    margin-bottom: 8px;
+  }
+  header.hero h1 { margin: 0 0 6px; font-size: 26px; }
+  header.hero p { margin: 0; opacity: .92; font-size: 15px; }
+
+  .toc {
+    background: #fff;
+    border: 1px solid #d5d9e0;
+    border-radius: 12px;
+    padding: 16px 22px;
+    margin: 20px 0 28px;
+  }
+  .toc b { display:block; margin-bottom: 6px; color:#1d4ed8; }
+  .toc ol { margin: 0; padding-left: 20px; }
+  .toc li { margin: 3px 0; }
+
+  section.step {
+    background: #fff;
+    border: 1px solid #d5d9e0;
+    border-radius: 12px;
+    padding: 22px 26px;
+    margin-bottom: 20px;
+  }
+  .step-head { display: flex; align-items: center; gap: 14px; margin-bottom: 4px; }
+  .num {
+    flex: 0 0 auto;
+    width: 38px; height: 38px;
+    background: #2563eb; color: #fff;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 19px;
+  }
+  .step-head h2 { margin: 0; font-size: 20px; }
+  .step-sub { color: #6b7280; font-size: 14px; margin: 2px 0 14px 52px; }
+  .step-body { margin-left: 52px; }
+
+  ul.clean { padding-left: 20px; margin: 8px 0; }
+  ul.clean li { margin: 6px 0; }
+
+  .btnfile {
+    display: inline-block;
+    background: #f2f4f7;
+    border: 1px solid #cbd2dc;
+    border-radius: 6px;
+    padding: 2px 9px;
+    font-weight: 700;
+    font-size: 15px;
+    white-space: nowrap;
+  }
+  kbd {
+    background: #eef1f5; border: 1px solid #cbd2dc; border-bottom-width: 2px;
+    border-radius: 5px; padding: 1px 7px; font-size: 14px; font-family: inherit;
+  }
+
+  .box { border-radius: 10px; padding: 14px 18px; margin: 14px 0; font-size: 15px; }
+  .box .t { font-weight: 700; margin-bottom: 3px; }
+  .warn   { background: #fef2f2; border: 1px solid #fecaca; }
+  .warn .t   { color: #b91c1c; }
+  .caution{ background: #fffbeb; border: 1px solid #fde68a; }
+  .caution .t{ color: #b45309; }
+  .info   { background: #eff6ff; border: 1px solid #bfdbfe; }
+  .info .t   { color: #1d4ed8; }
+  .ok     { background: #f0fdf4; border: 1px solid #bbf7d0; }
+  .ok .t     { color: #15803d; }
+
+  .big-warn {
+    background: #b91c1c; color: #fff;
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 20px;
+  }
+  .big-warn h2 { margin: 0 0 8px; font-size: 19px; }
+  .big-warn p { margin: 6px 0; }
+
+  table.tbl { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 14.5px; }
+  table.tbl th, table.tbl td { border: 1px solid #d5d9e0; padding: 8px 10px; text-align: left; vertical-align: top; }
+  table.tbl th { background: #eef1f5; }
+
+  .foot { text-align: center; color: #6b7280; font-size: 13px; margin-top: 30px; }
+
+  .print-hint { text-align:center; margin: 4px 0 20px; }
+  .print-hint button {
+    background:#2563eb; color:#fff; border:none; border-radius:8px;
+    padding:9px 18px; font-size:15px; font-weight:700; cursor:pointer;
+    font-family: inherit;
+  }
+
+  @media print {
+    body { background: #fff; font-size: 12.5px; }
+    .page { padding: 0; max-width: none; }
+    .print-hint { display: none; }
+    section.step, .toc, header.hero, .big-warn { break-inside: avoid; }
+    header.hero { background: #2563eb !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .num, .big-warn { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="hero">
+    <h1>주문관리 프로그램 · 새 컴퓨터 설치 가이드</h1>
+    <p>이 가이드 하나만 순서대로 따라 하시면 다른 컴퓨터에서도 프로그램을 쓸 수 있습니다.</p>
+  </header>
+
+  <div class="print-hint">
+    <button onclick="window.print()">🖨️ 이 가이드 인쇄하기</button>
+  </div>
+
+  <div class="toc">
+    <b>전체 순서 (크게 3단계)</b>
+    <ol>
+      <li><b>지금 쓰는 컴퓨터</b>에서 → 폴더를 USB로 복사</li>
+      <li><b>새 컴퓨터</b>에서 → 설치 파일 실행</li>
+      <li><b>쿠팡 Wing</b>에 새 컴퓨터 IP 등록 <span style="color:#b91c1c">(가장 중요)</span></li>
+    </ol>
+  </div>
+
+  <div class="big-warn">
+    <h2>⚠️ 먼저 꼭 아셔야 할 것</h2>
+    <p>폴더를 그냥 복사만 해서는 <b>작동하지 않습니다.</b> 아래 3단계를 모두 거쳐야 합니다.</p>
+    <p>특히 <b>3단계(쿠팡 IP 등록)</b>를 빠뜨리면, 프로그램은 켜지지만 <b>수집하기를 눌러도 전부 실패</b>합니다.</p>
+  </div>
+
+  <!-- STEP 1 -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">1</div>
+      <h2>지금 쓰는 컴퓨터에서 — 폴더 복사</h2>
+    </div>
+    <div class="step-sub">USB 메모리를 꽂고 시작하세요</div>
+    <div class="step-body">
+      <ul class="clean">
+        <li>프로그램 폴더 안의 <span class="btnfile">새컴퓨터로_복사하기.bat</span> 을 <b>더블클릭</b>합니다.</li>
+        <li><b>어디에 복사할지</b> 물어봅니다 → USB 드라이브 경로를 적으세요. (예: <kbd>E:\주문관리</kbd>)</li>
+        <li><b>데이터베이스도 복사할지</b> 물어봅니다.
+          <ul class="clean">
+            <li><kbd>y</kbd> = 지금까지의 주문·CS메모가 그대로 넘어감</li>
+            <li><kbd>n</kbd> = 새 컴퓨터는 빈 상태로 시작 (상점을 다시 등록해야 함)</li>
+          </ul>
+        </li>
+      </ul>
+      <div class="box info">
+        <div class="t">💡 용량이 큰 <kbd>.venv</kbd> 폴더는 자동으로 빠집니다</div>
+        이 컴퓨터 전용 파일이라 옮겨도 작동하지 않습니다. 새 컴퓨터에서 2단계로 다시 만들어집니다.
+      </div>
+      <div class="box warn">
+        <div class="t">🔒 이 폴더에는 실제 API 키와 고객 개인정보(이름·전화번호·통관고유부호)가 들어 있습니다</div>
+        USB를 잃어버리지 않게 주의하시고, <b>메일·카카오톡으로는 보내지 마세요.</b>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 2 -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">2</div>
+      <h2>새 컴퓨터에서 — 설치</h2>
+    </div>
+    <div class="step-sub">USB를 새 컴퓨터에 꽂고 시작하세요</div>
+    <div class="step-body">
+
+      <p><b>2-1. 폴더를 옮깁니다</b></p>
+      <ul class="clean">
+        <li>USB 안의 폴더를 <b>바탕화면</b>처럼 단순한 위치로 복사합니다.</li>
+        <li>❌ OneDrive 폴더 안에는 두지 마세요 (동기화 오류가 납니다).</li>
+        <li>❌ 폴더를 여러 겹 깊숙한 곳에 두지 마세요 (설치가 실패할 수 있습니다).</li>
+      </ul>
+
+      <p style="margin-top:16px"><b>2-2. 설치 파일 실행</b></p>
+      <ul class="clean">
+        <li><span class="btnfile">설치.bat</span> 을 <b>더블클릭</b>합니다.</li>
+        <li>검은 창에 글자가 계속 올라가는 게 정상입니다. <b>3~10분</b> 걸립니다. 중간에 닫지 마세요.</li>
+        <li><b>설치가 정상적으로 끝났습니다</b> 가 나오면 완료입니다.</li>
+      </ul>
+
+      <div class="box caution">
+        <div class="t">⚙️ "Python is not installed" 이라고 나오면</div>
+        파이썬을 먼저 깔아야 합니다:
+        <ol style="margin:6px 0 0; padding-left:20px">
+          <li><b>python.org/downloads/windows</b> 접속</li>
+          <li><b>Python 3.12.x — Windows installer (64-bit)</b> 다운로드</li>
+          <li>설치 화면 맨 아래 <b>「Add python.exe to PATH」 체크박스를 반드시 체크</b> ← 이거 빠뜨리면 안 됩니다</li>
+          <li>설치 완료 후 <span class="btnfile">설치.bat</span> 을 다시 실행</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- STEP 3 -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">3</div>
+      <h2>쿠팡 Wing에 새 컴퓨터 IP 등록</h2>
+    </div>
+    <div class="step-sub" style="color:#b91c1c; font-weight:700">이 단계를 빠뜨리면 수집하기가 전부 실패합니다</div>
+    <div class="step-body">
+      <p>쿠팡 오픈API는 <b>등록된 인터넷 주소(IP)</b>에서만 작동합니다. 새 컴퓨터가 <b>다른 인터넷</b>(다른 사무실·집·테더링)을 쓰면 IP가 달라서 차단됩니다.</p>
+
+      <p><b>확인 방법</b></p>
+      <ul class="clean">
+        <li>새 컴퓨터에서 <b>myip.com</b> 에 접속 → 나오는 IP 주소를 적습니다.</li>
+        <li>지금 쓰는 컴퓨터의 IP와 <b>같으면</b> → 등록할 필요 없습니다 (같은 인터넷을 쓰는 것).</li>
+        <li><b>다르면</b> → 아래처럼 등록합니다.</li>
+      </ul>
+
+      <p><b>등록 방법</b></p>
+      <ul class="clean">
+        <li>쿠팡 <b>Wing → 판매자정보 → 오픈API 키 발급/관리</b> 에서 그 IP를 추가합니다.</li>
+        <li><b>상점 3개(굿디얼·에버온·미노바) 각각 따로</b> 등록해야 합니다.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- RUN -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">✓</div>
+      <h2>실행하기</h2>
+    </div>
+    <div class="step-body">
+      <ul class="clean">
+        <li><span class="btnfile">주문관리_실행.bat</span> 을 <b>더블클릭</b>하면 프로그램 창이 열립니다.</li>
+        <li>바탕화면에 두고 쓰시려면: <span class="btnfile">주문관리_실행.bat</span> <b>우클릭 → 바로 가기 만들기</b> → 만들어진 바로가기를 바탕화면으로 옮기세요.</li>
+      </ul>
+      <div class="box ok">
+        <div class="t">✅ 여기까지 하면 새 컴퓨터에서 프로그램을 쓸 수 있습니다</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KNOW -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">i</div>
+      <h2>알아두실 점</h2>
+    </div>
+    <div class="step-body">
+      <p><b>두 컴퓨터의 데이터는 따로 쌓입니다</b><br>
+      자동 동기화가 안 됩니다. A컴퓨터에서 CS메모를 쓰면 B컴퓨터에는 안 보입니다. <b>한 대를 정해서 주로 쓰시길</b> 권합니다. (쿠팡에서 수집하는 주문 정보 자체는 어느 컴퓨터에서든 똑같이 받아옵니다. 따로 노는 건 CS메모처럼 직접 입력한 내용입니다.)</p>
+
+      <p><b>문자 발송 기능</b><br>
+      「휴대폰과 연결」(Phone Link) 앱을 통해 보내는 방식이라, 새 컴퓨터에서도 그 앱에 <b>휴대폰을 연결</b>해야 작동합니다.</p>
+
+      <p><b>프로그램을 수정했을 때</b><br>
+      이 컴퓨터에서 기능을 고치면 새 컴퓨터에는 자동 반영되지 않습니다. <span class="btnfile">새컴퓨터로_복사하기.bat</span> 을 다시 실행해 덮어쓰면 됩니다. 이때는 <span class="btnfile">설치.bat</span> 을 다시 돌릴 필요가 <b>없습니다</b>.</p>
+    </div>
+  </section>
+
+  <!-- TROUBLE -->
+  <section class="step">
+    <div class="step-head">
+      <div class="num">?</div>
+      <h2>문제가 생기면</h2>
+    </div>
+    <div class="step-body">
+      <table class="tbl">
+        <tr><th style="width:45%">증상</th><th>원인 / 해결</th></tr>
+        <tr><td>수집하기 누르면 전부 403 오류</td><td>3단계 IP 등록을 안 했습니다</td></tr>
+        <tr><td>Python is not installed</td><td>2-2단계, 「Add python.exe to PATH」 체크 확인</td></tr>
+        <tr><td>설치 중 오류로 멈춤</td><td>인터넷 연결 확인 후 <b>설치.bat</b> 다시 실행</td></tr>
+        <tr><td>이 폴더의 경로가 너무 깁니다</td><td>폴더를 바탕화면 등 짧은 위치로 옮기고 다시 실행</td></tr>
+        <tr><td>가상환경 생성 실패</td><td>폴더가 OneDrive 안에 있는지 확인 → 바탕화면으로 옮기기</td></tr>
+        <tr><td>실행하면 창이 잠깐 뜨고 꺼짐</td><td><b>설치.bat</b> 을 먼저 실행했는지 확인</td></tr>
+        <tr><td>상점 목록이 비어 있음</td><td>데이터베이스를 복사하지 않은 경우입니다. 설정 화면에서 상점을 다시 등록하세요</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <div class="foot">
+    주문관리 프로그램 설치 가이드 · 같은 폴더의 <b>새컴퓨터_설치안내.md</b> 에도 같은 내용이 글로 정리되어 있습니다.
+  </div>
+
+</div>
+</body>
+</html>

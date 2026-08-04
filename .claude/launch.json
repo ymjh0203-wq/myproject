@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "주문관리",
+      "runtimeExecutable": "주문관리/.venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "주문관리/app.py"],
+      "port": 8501
+    },
+    {
+      "name": "상세페이지_번역",
+      "runtimeExecutable": "상세페이지_번역/.venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "상세페이지_번역/app.py", "--server.port", "8502"],
+      "port": 8502
+    }
+  ]
+}
