@@ -401,7 +401,16 @@
       "Bash(curl -s -m 8 -o /dev/null -w \"  HTTP코드=%{http_code} 연결=%{time_connect}s\\\\n\" http://100.119.62.23:8080/)",
       "Bash(./.venv/Scripts/python.exe -m py_compile config.py integrations/sms_gateway_sender.py services/sms_sender.py services/customs_service.py ui/ready_to_ship.py)",
       "Bash(./.venv/Scripts/python.exe -m py_compile ui/cs_memo.py repositories/order_repository.py)",
-      "Bash(./.venv/Scripts/python.exe -c \"import ui.ready_to_ship, ui.cs_memo, ui.new_orders; print\\('임포트 OK'\\)\")"
+      "Bash(./.venv/Scripts/python.exe -c \"import ui.ready_to_ship, ui.cs_memo, ui.new_orders; print\\('임포트 OK'\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m py_compile config.py database.py migrate_to_supabase.py repositories/*.py)",
+      "Bash(./.venv/Scripts/python.exe \"/c/Users/User/AppData/Local/Temp/claude/C--Users-User-Desktop-------/6315d7ea-292a-4777-ad2e-3d4971a4e093/scratchpad/smoke_test.py\")",
+      "Bash(./.venv/Scripts/python.exe -c \"import sqlite3; c=sqlite3.connect\\(r'C:\\\\Users\\\\User\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-User-Desktop-------\\\\6315d7ea-292a-4777-ad2e-3d4971a4e093\\\\scratchpad\\\\smoke_copy.db'\\); print\\('market_accounts count:', c.execute\\('SELECT COUNT\\(*\\),MAX\\(id\\) FROM market_accounts'\\).fetchone\\(\\)\\)\")",
+      "mcp__visualize__show_widget",
+      "WebFetch(domain:geo.higgsfield.ai)",
+      "PowerShell(Get-CimInstance Win32_VideoController | Select-Object Name, @{n='VRAM_GB';e={[math]::Round\\($_.AdapterRAM/1GB,1\\)}}, DriverVersion | Format-List)",
+      "Bash(curl -s -m 6 -o /dev/null -w \"  /status HTTP=%{http_code} \\(000=거부/닫힘\\)\\\\n\" http://100.119.62.23:8080/status)",
+      "WebFetch(domain:www.ncloud.com)",
+      "Bash(./.venv/Scripts/python.exe -m pip install streamlit-aggrid)"
     ]
   }
 }

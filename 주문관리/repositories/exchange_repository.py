@@ -40,11 +40,13 @@ def insert_exchange(
                 market_name, market_account_id, exchange_id, market_order_id, status,
                 requested_at, raw_response_json, first_collected_at, last_updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (market_name, market_account_id, exchange_id, market_order_id, status, requested_at, raw_response_json, now, now),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 

@@ -56,6 +56,23 @@ QUICKSTAR_USER_ID = os.environ.get("QUICKSTAR_USER_ID", "")
 DB_PATH = os.environ.get("DB_PATH", os.path.join(BASE_DIR, "order_management.db"))
 
 # ----------------------------------------------------------
+# 클라우드 데이터베이스(Supabase PostgreSQL) 연결 문자열
+# ----------------------------------------------------------
+# 이 값이 비어 있으면 예전처럼 위의 SQLite 파일(order_management.db)을 씁니다.
+# 값이 채워져 있으면 그 대신 Supabase PostgreSQL에 접속해서 모든 데이터를
+# 클라우드에 저장/조회합니다. (여러 컴퓨터에서 같은 데이터를 볼 수 있게 됩니다)
+#
+# Supabase 대시보드 → Settings → Database → Connection string(URI 탭) 값을
+# .env 파일의 DATABASE_URL 에 붙여넣으면 됩니다. 예:
+#   DATABASE_URL=postgresql://postgres.xxxx:비밀번호@aws-...pooler.supabase.com:5432/postgres
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+
+def use_postgres() -> bool:
+    """지금 클라우드(Supabase PostgreSQL)를 쓰는 중인지 확인합니다."""
+    return bool(DATABASE_URL)
+
+# ----------------------------------------------------------
 # 문자 발송 게이트웨이 (폰의 Simple SMS Gateway 앱, Tailscale 경유)
 # ----------------------------------------------------------
 # 값이 있으면 모든 문자(수동/자동)를 이 주소로 POST해서 폰이 발송합니다.

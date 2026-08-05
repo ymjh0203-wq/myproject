@@ -16,3 +16,6 @@ openpyxl==3.1.5
 pytest==9.1.1
 # 퀵스타 배대지 웹 자동화(설치된 크롬을 몰아서 조작)
 playwright==1.61.0
+# Supabase(PostgreSQL) 클라우드 DB 연결용. .env에 DATABASE_URL이 있을 때만 사용됩니다.
+psycopg2-binary==2.9.10
+streamlit-aggrid==1.2.1.post2

@@ -491,31 +491,24 @@ def render() -> None:
     filtered_orders = [pair[0] for pair in filtered_pairs]
     filtered_rows = [pair[1] for pair in filtered_pairs]
 
-    # 신규주문과 동일한 일반표(헤더 전체선택). 택배사·송장 입력·퀵스타 접수는 오른쪽 상세에서.
-    # 표+상세를 fragment로 그려, 행 클릭 시 스크롤이 위로 튀지 않고 상세만 제자리에서 바뀝니다.
-    def _rts_detail(selected_order):
-        common.render_full_detail(selected_order, reveal)
-        if st.button(
-            "🔎 이 주문 관세청 공식검증",
-            key=f"rts_official_{selected_order['id']}",
-            width="stretch",
-            help="이 주문 하나만 관세청에 검증합니다. (여러 건은 위 '표시된 전체 관세청 공식검증')",
-        ):
-            _confirm_official_check([selected_order])
-        if selected_order.get("quickstar_order_no"):
-            st.caption(f"퀵스타 접수됨: {selected_order['quickstar_order_no']}")
-        if st.button(
-            "🛒 퀵스타 배대지 접수",
-            key=f"rts_quickstar_{selected_order['id']}",
-            width="stretch",
-            help="이 주문의 수취인 정보를 퀵스타 배대지 신청 폼에 자동 입력합니다.",
-        ):
-            _confirm_quickstar_submit([selected_order])
-        _render_sms_form(selected_order, reveal)
-        _render_invoice_form(selected_order)
+    # AG-Grid 표: 왼쪽 체크박스(+머리글 전체선택), 마우스로 컬럼/행(순번) 드래그 순서변경(자동저장).
+    import pandas as pd
 
-    _, selected_orders, detail_orders, _ = common.render_full_table(
-        filtered_rows, filtered_orders, key="rts", detail_renderer=_rts_detail, multi_select=True
+    from ui import aggrid_table
+
+    grid_df = pd.DataFrame(filtered_rows)
+    _front = ["No", "택배사", "송장번호", "통관검증 상태", "발송 가능 여부", "수령자", "주문번호", "상품명", "퀵스타"]
+    _cols = [c for c in _front if c in grid_df.columns] + [c for c in grid_df.columns if c not in _front]
+    grid_df = grid_df[_cols]
+
+    # 표 안에서 택배사(드롭다운)·송장번호(직접입력) 편집 가능하게 설정.
+    _courier_labels = [common.COURIER_UNSET_LABEL] + list(common.COURIER_LABEL_TO_CODE.keys())
+    _editable = {
+        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_labels}},
+        "송장번호": {"cellEditor": "agTextCellEditor"},
+    }
+    selected_orders, edited_df = aggrid_table.render_orders_grid(
+        grid_df, key="rts", orders=filtered_orders, editable=_editable, height=520
     )
 
     if official_selected_clicked:
@@ -523,3 +516,52 @@ def render() -> None:
             st.warning("검증할 주문을 표 왼쪽 체크박스로 선택해주세요.")
         else:
             _confirm_official_check(selected_orders)
+
+    # 발송처리: 표 안에 입력한 택배사·송장번호로 쿠팡 송장 등록 → 배송중.
+    if st.button("🚚 발송처리 (표에 입력한 택배사·송장 등록 → 배송중)", type="primary", width="stretch", key="rts_bulk_ship"):
+        try:
+            records = edited_df.to_dict("records")
+        except Exception:
+            records = []
+        rows_to_ship = []
+        for r in records:
+            try:
+                idx = int(r.get(aggrid_table.IDX_COL))
+            except Exception:
+                continue
+            if not (0 <= idx < len(filtered_orders)):
+                continue
+            order = filtered_orders[idx]
+            courier_code = common.COURIER_LABEL_TO_CODE.get(r.get("택배사"))
+            invoice = str(r.get("송장번호") or "").strip()
+            if not (courier_code and invoice):
+                continue
+            if order["work_status"] != models.WORK_STATUS_READY_TO_SHIP:
+                continue
+            if (order["shipping"] or {}).get("validation_status") not in models.SHIPPABLE_VALIDATION_STATUSES:
+                continue
+            rows_to_ship.append({"order": order, "택배사코드": courier_code, "송장번호": invoice})
+        if not rows_to_ship:
+            st.warning("표에 택배사·송장번호를 입력하고, 통관검증을 통과한 주문이 있어야 합니다.")
+        else:
+            _confirm_bulk_register_invoice(rows_to_ship)
+
+    # 상세: 체크한 주문(여럿이면 마지막)의 상세 + 퀵스타 접수 + 문자.
+    st.divider()
+    if selected_orders:
+        order = selected_orders[-1]
+        shipping = order.get("shipping") or {}
+        st.subheader(f"상세내역 — {shipping.get('receiver_name') or order['market_order_id']}")
+        common.render_full_detail(order, reveal)
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("🔎 이 주문 관세청 공식검증", key=f"rts_official_{order['id']}", width="stretch"):
+                _confirm_official_check([order])
+        with col_b:
+            if st.button("🛒 퀵스타 배대지 접수", key=f"rts_quickstar_{order['id']}", width="stretch"):
+                _confirm_quickstar_submit([order])
+        if order.get("quickstar_order_no"):
+            st.caption(f"퀵스타 접수됨: {order['quickstar_order_no']}")
+        _render_sms_form(order, reveal)
+    else:
+        st.caption("표 왼쪽 체크박스를 체크하면 그 주문의 상세·퀵스타·문자가 여기에 나타납니다.")

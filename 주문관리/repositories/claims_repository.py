@@ -50,6 +50,7 @@ def insert_claim(
                 requested_at, complete_confirm_type, complete_confirm_date,
                 raw_response_json, first_collected_at, last_updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 market_name, market_account_id, claim_type, receipt_id, market_order_id,
@@ -58,8 +59,9 @@ def insert_claim(
                 raw_response_json, now, now,
             ),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 
