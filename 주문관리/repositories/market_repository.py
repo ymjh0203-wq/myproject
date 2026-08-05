@@ -125,6 +125,7 @@ def create_market_account(
                 market_name, platform, connection_type, api_vendor_id, api_access_key,
                 api_secret_key, login_id, login_password, is_active, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            RETURNING id
             """,
             (
                 market_name,
@@ -138,8 +139,9 @@ def create_market_account(
                 _now(),
             ),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 

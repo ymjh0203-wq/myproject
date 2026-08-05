@@ -13,8 +13,82 @@ import sqlite3
 import config
 
 
-def get_connection() -> sqlite3.Connection:
-    """데이터베이스 파일에 연결합니다. 파일이 없으면 자동으로 새로 만들어집니다."""
+# ==========================================================
+# PostgreSQL(Supabase) 호환 래퍼
+# ----------------------------------------------------------
+# 이 앱의 repositories/ 코드는 원래 SQLite에 맞춰 쓰여 있습니다
+# (자리표시자로 물음표 '?' 사용, connection.execute(...) 바로 호출 등).
+# PostgreSQL(psycopg2)은 자리표시자가 '%s'라서 문법이 조금 다릅니다.
+# 그래서 아래 얇은 래퍼가 그 차이만 몰래 메꿔서, repositories 코드를
+# 거의 그대로 두고도 PostgreSQL에서 똑같이 동작하게 해줍니다.
+#   - '?'  -> '%s' 로 자동 변환
+#   - '%'  -> '%%' 로 감싸서 psycopg2가 오해하지 않게 함 (LIKE 등 대비)
+#   - connection.execute(sql, params) 를 sqlite와 똑같이 쓸 수 있게 함
+# ==========================================================
+
+
+def _to_pg_sql(sql: str) -> str:
+    """SQLite식 SQL을 psycopg2가 이해하는 형태로 살짝 바꿔줍니다."""
+    # 먼저 진짜 '%' 문자를 '%%'로 감쌉니다(psycopg2는 %를 특수문자로 봅니다).
+    # 그 다음 자리표시자 '?'를 psycopg2식 '%s'로 바꿉니다.
+    return sql.replace("%", "%%").replace("?", "%s")
+
+
+class _PostgresConnection:
+    """psycopg2 연결을 sqlite3.Connection 처럼 쓸 수 있게 감싼 객체입니다."""
+
+    def __init__(self, raw_connection):
+        self._conn = raw_connection
+
+    def execute(self, sql: str, params=()):
+        """sqlite의 connection.execute 와 똑같이, 실행 후 커서를 돌려줍니다."""
+        cursor = self._conn.cursor()
+        # params를 항상 넘겨야 psycopg2가 '%%' 를 다시 '%' 로 되돌려줍니다.
+        cursor.execute(_to_pg_sql(sql), params if params is not None else ())
+        return cursor
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        # 열려 있던(커밋 안 한) 조회 트랜잭션을 깨끗이 정리한 뒤 닫습니다.
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+        self._conn.close()
+
+
+def _pg_connect() -> "_PostgresConnection":
+    """Supabase PostgreSQL에 접속합니다. 결과 행은 컬럼명으로 접근할 수 있습니다."""
+    import psycopg2
+    import psycopg2.extras
+
+    raw = psycopg2.connect(
+        config.DATABASE_URL,
+        # RealDictCursor: 조회 결과를 dict(row) / row["컬럼명"] 으로 쓸 수 있게 합니다
+        # (sqlite3.Row 와 동일한 사용감).
+        cursor_factory=psycopg2.extras.RealDictCursor,
+        connect_timeout=15,
+    )
+    return _PostgresConnection(raw)
+
+
+def get_connection():
+    """데이터베이스에 연결합니다.
+
+    - .env에 DATABASE_URL이 있으면 Supabase PostgreSQL에 접속합니다.
+    - 없으면 예전처럼 로컬 SQLite 파일(order_management.db)에 접속합니다.
+    """
+    if config.use_postgres():
+        return _pg_connect()
+
     # timeout: 여러 수집 작업을 동시에(병렬로) 돌릴 때, 한 작업이 DB에 쓰는 동안
     # 다른 작업이 잠깐 기다렸다가 이어서 쓰도록 합니다 (안 그러면 "database is
     # locked" 오류가 납니다). 홈 화면의 "전체 한번에 새로고침"이 병렬로 돌기 때문에 필요합니다.
@@ -308,12 +382,47 @@ ADDITIONAL_COLUMNS = {
 }
 
 
-def _add_missing_columns(connection: sqlite3.Connection) -> None:
+def _postgres_ddl_statements() -> list:
+    """SQLite용 CREATE 문을 PostgreSQL용으로 살짝 바꾸고, 참조 순서를 정리합니다.
+
+    - 'INTEGER PRIMARY KEY AUTOINCREMENT' 는 PostgreSQL에서 'SERIAL PRIMARY KEY'.
+    - PostgreSQL은 외래키(FK)가 가리키는 표가 '먼저' 만들어져 있어야 하므로,
+      다른 표들이 참조하는 market_accounts 와 orders 를 앞으로 당깁니다.
+    """
+    statements = [
+        s.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+        for s in CREATE_TABLE_STATEMENTS
+    ]
+
+    def order_key(statement: str) -> int:
+        if "CREATE TABLE IF NOT EXISTS market_accounts" in statement:
+            return 0  # 여러 표가 참조하므로 가장 먼저
+        if "CREATE TABLE IF NOT EXISTS orders (" in statement:
+            return 1  # order_items 등이 참조하므로 그 다음
+        return 2
+
+    # 파이썬 정렬은 안정 정렬이라, 나머지 표들은 원래 순서를 그대로 유지합니다.
+    return sorted(statements, key=order_key)
+
+
+def _existing_columns(connection, table_name: str) -> set:
+    """해당 표에 이미 있는 컬럼 이름들을 돌려줍니다 (SQLite/PostgreSQL 공통)."""
+    if config.use_postgres():
+        rows = connection.execute(
+            """
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ?
+            """,
+            (table_name,),
+        ).fetchall()
+        return {row["column_name"] for row in rows}
+    return {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})")}
+
+
+def _add_missing_columns(connection) -> None:
     """이미 만들어져 있던 표에, 나중에 새로 생긴 컬럼이 빠져있으면 추가해줍니다."""
     for table_name, columns in ADDITIONAL_COLUMNS.items():
-        existing_columns = {
-            row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})")
-        }
+        existing_columns = _existing_columns(connection, table_name)
         for column_name, column_type in columns:
             if column_name not in existing_columns:
                 connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
@@ -321,9 +430,10 @@ def _add_missing_columns(connection: sqlite3.Connection) -> None:
 
 def init_db() -> None:
     """필요한 테이블이 없으면 만듭니다. 이미 있으면 빠진 컬럼만 추가합니다."""
+    statements = _postgres_ddl_statements() if config.use_postgres() else CREATE_TABLE_STATEMENTS
     connection = get_connection()
     try:
-        for statement in CREATE_TABLE_STATEMENTS:
+        for statement in statements:
             connection.execute(statement)
         _add_missing_columns(connection)
         connection.commit()

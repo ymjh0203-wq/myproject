@@ -52,13 +52,15 @@ def insert_product_inquiry(
                 inquiry_at, answered, raw_response_json, first_collected_at, last_updated_at,
                 seller_product_id, vendor_item_id, order_ids, answer_content, answered_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (market_name, market_account_id, inquiry_id, market_item_id, content,
              inquiry_at, int(answered), raw_response_json, now, now,
              seller_product_id, vendor_item_id, order_ids, answer_content, answered_at),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 
@@ -230,13 +232,15 @@ def insert_call_center_inquiry(
                 partner_counseling_status, content, buyer_phone, inquiry_at,
                 raw_response_json, first_collected_at, last_updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (market_name, market_account_id, inquiry_id, market_order_id, inquiry_status,
              partner_counseling_status, content, buyer_phone, inquiry_at,
              raw_response_json, now, now),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 

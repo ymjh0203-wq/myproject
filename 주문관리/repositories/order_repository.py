@@ -163,6 +163,7 @@ def insert_order(
                 orderer_name, orderer_phone, paid_at, remote_area,
                 market_delivery_company_name, market_invoice_number
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 market_name,
@@ -185,8 +186,9 @@ def insert_order(
                 market_invoice_number,
             ),
         )
+        new_id = cursor.fetchone()["id"]
         connection.commit()
-        return cursor.lastrowid
+        return new_id
     finally:
         connection.close()
 
@@ -390,7 +392,7 @@ def get_customs_error_sms_sent(order_id: int) -> str:
             "SELECT customs_error_sms_sent FROM shipping_information WHERE order_id = ?",
             (order_id,),
         ).fetchone()
-        return row[0] if row and row[0] else None
+        return row["customs_error_sms_sent"] if row and row["customs_error_sms_sent"] else None
     finally:
         connection.close()
 
