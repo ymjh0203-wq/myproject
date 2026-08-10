@@ -18,7 +18,12 @@
 │  └─ 001_init.sql        # 초기 스키마 (5개 표 + 인덱스 + 트리거)
 ├─ apply_migration.py     # .sql 을 Supabase 에 적용하는 스크립트
 ├─ collector/
-│  └─ taobao.py           # Playwright 타오바오 상세페이지 수집 + 캡차 감지
+│  ├─ taobao.py           # Playwright 타오바오 상세페이지 수집 + 캡차 감지
+│  └─ taobao_image_search.py  # 타오바오 이미지검색(拍立淘) → 후보 URL
+├─ app.py                 # 웹 화면(Streamlit) — 벤치마킹 소싱
+├─ 벤치마킹소싱_실행.bat   # 웹 화면 실행 런처
+├─ seed.py                # 씨앗 이미지 확보(한국 마켓 URL / 로컬 이미지)
+├─ bench.py               # CLI 벤치마킹 소싱 진입점
 ├─ db.py                  # DATABASE_URL 연결 + products_raw upsert
 ├─ collect.py             # CLI: python collect.py "<타오바오 URL>"
 ├─ requirements.txt
@@ -65,19 +70,26 @@ python collect.py "https://item.taobao.com/item.htm?id=..."             # produc
 
 ## Step 2.5 실행 방법 (벤치마킹 소싱)
 잘 팔리는 기준 상품의 **이미지로 타오바오에서 유사 상품 N개**를 찾아 저장합니다.
+
+### 웹 화면(권장)
 ```bash
-cd 상품등록
+벤치마킹소싱_실행.bat        # 더블클릭 → 브라우저에서 http://localhost:8503
+```
+URL 붙여넣기 또는 이미지 업로드 → 개수 슬라이더 → "유사 상품 찾기" → 후보를
+썸네일 카드로 보고 채택할 항목 선택 → "선택 항목 저장"(products_raw).
+- 검색을 누르면 **타오바오 크롬 창이 따로** 뜹니다. 로그인/캡차는 그 창에서 직접
+  처리하면, 결과가 뜨는 순간 화면이 자동으로 이어받습니다(입력 대기 없음).
+
+### 명령줄(CLI)
+```bash
 python apply_migration.py                 # 001 + 002(benchmark_seeds) 적용
-# 한국 마켓 상품 URL 로 (대표이미지 자동 추출)
 .venv\Scripts\python.exe bench.py --url "https://smartstore.naver.com/..." -n 3
-# 또는 로컬 이미지 파일로
 .venv\Scripts\python.exe bench.py --image "C:\사진\photo.jpg" -n 5 --dry-run
 ```
-- `-n` 후보 개수(기본 3), `--dry-run` 저장없이 결과만, `--manual` 이미지검색을 창에서 직접.
+- `-n` 후보 개수(기본 3), `--dry-run` 저장없이 결과만, `--manual` 창에서 직접 검색.
 - 흐름: 씨앗 이미지 확보 → `benchmark_seeds` 기록 → 타오바오 이미지검색 → 후보 N개
   → 각각 `taobao.py`로 추출 → `products_raw` 저장(`seed_id`·`match_rank` 연결).
-- 타오바오 이미지검색 결과 페이지는 봇차단이 강합니다. 자동이 막히면 `--manual` 로
-  창에서 직접 검색을 끝낸 뒤 링크를 수집합니다. 셀렉터는 첫 실전 후 조정될 수 있습니다.
+- 타오바오 이미지검색 결과 페이지는 봇차단이 강합니다. 셀렉터는 첫 실전 후 조정될 수 있습니다.
 - 프로그램은 캡차를 자동으로 뚫지 않습니다(정책·차단 위험). 감지 시 멈추고 알려줍니다.
 - 타오바오 HTML 구조는 자주 바뀝니다. 추출이 비는 필드가 있으면 로그에 표시되며,
   `collector/taobao.py` 의 셀렉터를 실제 페이지에 맞게 조정해야 할 수 있습니다.

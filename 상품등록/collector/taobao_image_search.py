@@ -16,6 +16,7 @@
 
 import logging
 import re
+import time
 
 from playwright.sync_api import TimeoutError as PWTimeoutError
 from playwright.sync_api import sync_playwright
@@ -73,10 +74,14 @@ def _collect_item_links(page, n: int) -> list[str]:
 
 
 def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
-                 manual: bool = False) -> list[str]:
+                 manual: bool = False, poll_seconds: int = 90) -> list[str]:
     """
     이미지 파일로 타오바오를 검색해 유사 상품 상세 URL 을 최대 n개 반환합니다.
-    manual=True 면 사용자가 창에서 직접 검색을 끝낼 때까지 기다립니다.
+
+    - manual=False(기본): 이미지를 자동 업로드한 뒤, 결과가 나올 때까지 poll_seconds 동안
+      기다립니다. 그 사이 캡차가 뜨면 사용자가 "보이는 창"에서 직접 풀면 되고, 결과가
+      뜨는 순간 자동으로 링크를 수집합니다. (웹 UI에서 쓰는 경로 — input() 없음)
+    - manual=True: 사용자가 창에서 직접 검색을 끝내고 터미널에서 Enter (CLI 전용).
     """
     profile_dir = profile_dir or DEFAULT_PROFILE_DIR
 
@@ -135,25 +140,29 @@ def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
                 file_input.set_input_files(image_path)
                 _sleep_random(2.0, 4.0)
 
-            # 결과 로딩 대기
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except PWTimeoutError:
-                pass
+            # 결과가 나올 때까지 폴링(그 사이 캡차는 사용자가 창에서 직접 처리 가능)
+            deadline = time.time() + poll_seconds
+            links: list[str] = []
+            while time.time() < deadline:
+                try:
+                    page.wait_for_load_state("networkidle", timeout=5000)
+                except PWTimeoutError:
+                    pass
+                links = _collect_item_links(page, n)
+                if links:
+                    break
+                # 아직 결과가 없으면(로딩 중이거나 캡차 대기) 잠시 후 재확인
+                _sleep_random(2.5, 4.0)
 
-            # 캡차/차단 감지 (자동 모드에서만 예외; 수동 모드는 사용자가 이미 처리)
-            if not manual and _looks_like_captcha(page):
-                logger.warning("캡차/차단 감지됨: %s", page.url)
-                raise CaptchaDetected(
-                    "이미지검색 중 캡차/차단이 떴습니다. "
-                    "--manual 로 다시 실행해 창에서 직접 검색을 끝내주세요."
-                )
-
-            links = _collect_item_links(page, n)
             logger.info("후보 상품 링크 %d개 수집", len(links))
             if not links:
+                if _looks_like_captcha(page):
+                    raise CaptchaDetected(
+                        "제한시간 안에 결과가 뜨지 않았습니다(캡차/차단 가능). "
+                        "열린 창에서 검색을 끝낸 뒤 다시 시도하거나, 시간을 늘려주세요."
+                    )
                 logger.warning(
-                    "결과에서 상품 링크를 못 찾았습니다. 셀렉터 조정 또는 --manual 필요."
+                    "결과에서 상품 링크를 못 찾았습니다. 셀렉터 조정이 필요할 수 있습니다."
                 )
             return links
         finally:

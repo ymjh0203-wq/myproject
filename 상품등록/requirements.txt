@@ -2,6 +2,7 @@
 psycopg[binary]>=3.1     # Supabase(PostgreSQL) 연결
 python-dotenv>=1.0       # .env 로 DATABASE_URL 읽기
 playwright>=1.40         # 타오바오 상세페이지 수집 (Step 2)
+streamlit>=1.57          # 웹 UI (벤치마킹 소싱 화면)
 
 # 설치 후 브라우저 엔진도 한 번 받아야 합니다:
 #   pip install -r requirements.txt

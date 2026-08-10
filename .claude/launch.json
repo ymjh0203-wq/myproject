@@ -12,6 +12,12 @@
       "runtimeExecutable": "상세페이지_번역/.venv/Scripts/streamlit.exe",
       "runtimeArgs": ["run", "상세페이지_번역/app.py", "--server.port", "8502"],
       "port": 8502
+    },
+    {
+      "name": "상품등록",
+      "runtimeExecutable": "상품등록/.venv/Scripts/streamlit.exe",
+      "runtimeArgs": ["run", "상품등록/app.py", "--server.port", "8503"],
+      "port": 8503
     }
   ]
 }
