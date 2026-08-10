@@ -53,6 +53,18 @@ def _download(image_url: str, referer: str) -> str:
     return path
 
 
+def _is_junk_image(url: str) -> bool:
+    """상품 이미지가 아닌 '쓰레기' 이미지(로그인 아이콘, SVG, 공통 static 등)를 걸러냅니다."""
+    u = (url or "").lower()
+    if not u:
+        return True
+    if u.endswith(".svg"):
+        return True
+    junk_marks = ("/login/", "/nid/", "static/nid", "icon-", "sprite", "blank",
+                  "/common/", "placeholder", "loading")
+    return any(m in u for m in junk_marks)
+
+
 def image_from_url(product_url: str) -> dict:
     """
     한국 마켓 상품 URL에서 대표이미지를 찾아 내려받습니다.
@@ -71,29 +83,41 @@ def image_from_url(product_url: str) -> dict:
                 page.mouse.wheel(0, 1500)
                 time.sleep(0.4)
 
-            image_url = None
-            # 1) 대표이미지로 가장 신뢰도 높은 og:image
+            # 봇 차단으로 로그인 페이지로 튕겼는지 먼저 확인
+            final_url = (page.url or "").lower()
+            if any(k in final_url for k in ("nid.naver", "/login", "nidlogin", "captcha")):
+                raise RuntimeError(
+                    "네이버 쇼핑 카탈로그/검색 페이지는 봇 차단이 있어 자동 추출이 막혔습니다"
+                    "(로그인 페이지로 튕김). 상품 이미지를 직접 업로드하거나, 판매자의"
+                    " 스마트스토어 '상품 상세' URL을 넣어주세요."
+                )
+
+            # og:image → 메인 갤러리 순으로, '쓰레기 이미지'는 걸러가며 후보 수집
+            candidates: list[str] = []
             for attr in ("property", "name"):
                 loc = page.locator(f'meta[{attr}="og:image"]').first
                 if loc.count() > 0:
-                    image_url = loc.get_attribute("content")
-                    if image_url:
-                        break
-            # 2) 없으면 메인 갤러리의 첫 이미지 후보
+                    c = loc.get_attribute("content")
+                    if c:
+                        candidates.append(c)
+            for sel in (
+                "img#repImage",                      # 스마트스토어 계열
+                ".prod-image__detail img",           # 쿠팡 계열
+                "[class*='thumb'] img",
+                "img",
+            ):
+                loc = page.locator(sel).first
+                if loc.count() > 0:
+                    c = loc.get_attribute("src") or loc.get_attribute("data-src")
+                    if c:
+                        candidates.append(c)
+
+            image_url = next((c for c in candidates if not _is_junk_image(c)), None)
             if not image_url:
-                for sel in (
-                    "img#repImage",                      # 스마트스토어 계열
-                    ".prod-image__detail img",           # 쿠팡 계열
-                    "[class*='thumb'] img",
-                    "img",
-                ):
-                    loc = page.locator(sel).first
-                    if loc.count() > 0:
-                        image_url = loc.get_attribute("src") or loc.get_attribute("data-src")
-                        if image_url:
-                            break
-            if not image_url:
-                raise RuntimeError("대표이미지를 찾지 못했습니다. --image 로 직접 넣어보세요.")
+                raise RuntimeError(
+                    "상품 대표이미지를 찾지 못했습니다(로그인/아이콘 이미지만 잡힘). "
+                    "상품 이미지를 직접 업로드하거나 스마트스토어 상품 상세 URL을 넣어주세요."
+                )
 
             local_path = _download(image_url, referer=product_url)
         finally:
