@@ -53,10 +53,14 @@ python apply_migration.py    # migrations/*.sql 을 Supabase 에 적용
 cd 상품등록
 pip install -r requirements.txt
 playwright install chromium              # 브라우저 엔진 1회 설치
-python collect.py "https://item.taobao.com/item.htm?id=..."
+python 타오바오_로그인_설정.bat            # (최초 1회) 창에서 직접 로그인
+python collect.py "https://item.taobao.com/item.htm?id=..." --dry-run   # 저장없이 추출만
+python collect.py "https://item.taobao.com/item.htm?id=..."             # products_raw 저장
 ```
-- 처음 실행하면 크롬 창이 뜹니다. **로그인/캡차가 보이면 그 창에서 직접 처리**한 뒤
-  다시 실행하세요. 한 번 로그인하면 `.browser_profile/` 에 저장되어 유지됩니다.
+- 최초 1회 `타오바오_로그인_설정.bat` 으로 직접 로그인하면 `.browser_profile/` 에
+  세션이 저장되어 이후 유지됩니다.
+- `--dry-run` 은 DB 없이 추출 결과만 출력합니다(셀렉터 점검용).
+- 로그인/캡차가 보이면 그 창에서 직접 처리합니다(프로그램은 자동으로 뚫지 않음).
 - 프로그램은 캡차를 자동으로 뚫지 않습니다(정책·차단 위험). 감지 시 멈추고 알려줍니다.
 - 타오바오 HTML 구조는 자주 바뀝니다. 추출이 비는 필드가 있으면 로그에 표시되며,
   `collector/taobao.py` 의 셀렉터를 실제 페이지에 맞게 조정해야 할 수 있습니다.

@@ -15,6 +15,7 @@
 #   - 한 번 로그인해두면 .browser_profile 에 저장되어 다음부터 유지됩니다.
 # ============================================================
 
+import json
 import logging
 import sys
 
@@ -30,11 +31,15 @@ logger = logging.getLogger("collect")
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print('사용법: python collect.py "<타오바오 상세페이지 URL>"')
+    # --dry-run: DB에 저장하지 않고 추출 결과만 출력(로그인 후 셀렉터 점검용)
+    args = [a for a in sys.argv[1:] if a != "--dry-run"]
+    dry_run = "--dry-run" in sys.argv[1:]
+
+    if not args:
+        print('사용법: python collect.py "<타오바오 상세페이지 URL>" [--dry-run]')
         sys.exit(1)
 
-    url = sys.argv[1].strip()
+    url = args[0].strip()
     if "taobao.com" not in url and "tmall.com" not in url:
         print("[경고] 타오바오/티몰 상세페이지 URL 이 아닌 것 같습니다:", url)
 
@@ -53,6 +58,12 @@ def main() -> None:
     empty = [k for k in ("title_original", "price_original", "image_urls") if not data.get(k)]
     if empty:
         logger.warning("추출하지 못한 필드: %s (셀렉터 조정이 필요할 수 있음)", ", ".join(empty))
+
+    # --dry-run 이면 추출 결과만 보여주고 종료(저장 안 함)
+    if dry_run:
+        print("\n[dry-run] 저장하지 않고 추출 결과만 출력합니다:\n")
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return
 
     # 2) 저장
     try:
