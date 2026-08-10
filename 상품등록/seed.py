@@ -1,0 +1,120 @@
+# ============================================================
+# seed.py  —  벤치마킹 "씨앗 이미지" 확보
+# ------------------------------------------------------------
+# 두 가지 입력을 지원합니다:
+#   1) 한국 마켓 상품 URL (스마트스토어/쿠팡 등)
+#      → 페이지의 대표이미지(og:image 또는 메인 갤러리)를 찾아 로컬로 내려받음
+#   2) 로컬 이미지 파일 경로
+#      → 그대로 사용
+#
+# 확보한 이미지는 seeds/ 폴더에 저장하고, 타오바오 이미지검색에 사용합니다.
+# ============================================================
+
+import hashlib
+import os
+import time
+import urllib.request
+
+from playwright.sync_api import sync_playwright
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SEEDS_DIR = os.path.join(BASE_DIR, "seeds")
+
+_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+)
+
+
+def _ensure_seeds_dir() -> None:
+    os.makedirs(SEEDS_DIR, exist_ok=True)
+
+
+def _download(image_url: str, referer: str) -> str:
+    """이미지 URL을 seeds/ 폴더로 내려받고 로컬 경로를 반환합니다."""
+    _ensure_seeds_dir()
+    if image_url.startswith("//"):
+        image_url = "https:" + image_url
+    # 파일명은 URL 해시로 (중복/특수문자 문제 회피)
+    ext = ".jpg"
+    for e in (".jpg", ".jpeg", ".png", ".webp"):
+        if e in image_url.lower():
+            ext = e
+            break
+    name = hashlib.md5(image_url.encode("utf-8")).hexdigest()[:16] + ext
+    path = os.path.join(SEEDS_DIR, name)
+
+    req = urllib.request.Request(
+        image_url,
+        headers={"User-Agent": _UA, "Referer": referer or ""},
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp, open(path, "wb") as f:
+        f.write(resp.read())
+    return path
+
+
+def image_from_url(product_url: str) -> dict:
+    """
+    한국 마켓 상품 URL에서 대표이미지를 찾아 내려받습니다.
+    반환: {"seed_type":"url", "seed_ref": url, "seed_image_url": ..., "seed_image_path": ...}
+    """
+    product_url = product_url.strip()
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page(
+                user_agent=_UA, viewport={"width": 1280, "height": 1600}
+            )
+            page.goto(product_url, wait_until="load", timeout=45000)
+            # 지연 로딩 이미지 대비 살짝 스크롤
+            for _ in range(3):
+                page.mouse.wheel(0, 1500)
+                time.sleep(0.4)
+
+            image_url = None
+            # 1) 대표이미지로 가장 신뢰도 높은 og:image
+            for attr in ("property", "name"):
+                loc = page.locator(f'meta[{attr}="og:image"]').first
+                if loc.count() > 0:
+                    image_url = loc.get_attribute("content")
+                    if image_url:
+                        break
+            # 2) 없으면 메인 갤러리의 첫 이미지 후보
+            if not image_url:
+                for sel in (
+                    "img#repImage",                      # 스마트스토어 계열
+                    ".prod-image__detail img",           # 쿠팡 계열
+                    "[class*='thumb'] img",
+                    "img",
+                ):
+                    loc = page.locator(sel).first
+                    if loc.count() > 0:
+                        image_url = loc.get_attribute("src") or loc.get_attribute("data-src")
+                        if image_url:
+                            break
+            if not image_url:
+                raise RuntimeError("대표이미지를 찾지 못했습니다. --image 로 직접 넣어보세요.")
+
+            local_path = _download(image_url, referer=product_url)
+        finally:
+            browser.close()
+
+    return {
+        "seed_type": "url",
+        "seed_ref": product_url,
+        "seed_image_url": image_url,
+        "seed_image_path": local_path,
+    }
+
+
+def image_from_file(path: str) -> dict:
+    """로컬 이미지 파일을 씨앗으로 사용합니다."""
+    path = os.path.abspath(path.strip().strip('"'))
+    if not os.path.exists(path):
+        raise RuntimeError(f"이미지 파일을 찾을 수 없습니다: {path}")
+    return {
+        "seed_type": "image",
+        "seed_ref": os.path.basename(path),
+        "seed_image_url": None,
+        "seed_image_path": path,
+    }

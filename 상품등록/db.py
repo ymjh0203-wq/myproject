@@ -73,3 +73,41 @@ def upsert_product_raw(conn: psycopg.Connection, data: dict) -> int:
         new_id = cur.fetchone()[0]
     conn.commit()
     return new_id
+
+
+def insert_benchmark_seed(conn: psycopg.Connection, seed: dict) -> int:
+    """벤치마킹 씨앗(기준 상품 이미지)을 benchmark_seeds 에 저장하고 id 를 반환합니다."""
+    sql = """
+        INSERT INTO benchmark_seeds
+            (seed_type, seed_ref, seed_image_url, seed_image_path, note)
+        VALUES
+            (%(seed_type)s, %(seed_ref)s, %(seed_image_url)s, %(seed_image_path)s, %(note)s)
+        RETURNING id;
+    """
+    params = {
+        "seed_type": seed["seed_type"],
+        "seed_ref": seed["seed_ref"],
+        "seed_image_url": seed.get("seed_image_url"),
+        "seed_image_path": seed.get("seed_image_path"),
+        "note": seed.get("note"),
+    }
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        new_id = cur.fetchone()[0]
+    conn.commit()
+    return new_id
+
+
+def link_to_seed(conn: psycopg.Connection, product_id: int, seed_id: int,
+                 match_rank: int | None = None) -> None:
+    """
+    저장된 products_raw 행을 어떤 씨앗에서 몇 번째로 나왔는지 연결합니다.
+    (기존 upsert_product_raw 는 그대로 두고, 이 컬럼만 따로 업데이트 —
+     002_benchmark.sql 이 적용돼 있어야 합니다.)
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE products_raw SET seed_id = %s, match_rank = %s WHERE id = %s",
+            (seed_id, match_rank, product_id),
+        )
+    conn.commit()

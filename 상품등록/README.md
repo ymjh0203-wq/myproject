@@ -7,8 +7,9 @@
 
 ## 진행 단계
 - [x] Step 1 — Supabase 스키마 설계
-- [x] **Step 2 — 타오바오 상품 수집기 MVP** ← 현재 (Playwright, 프로필 재사용)
-- [ ] Step 3 — 이후 논의 (가공/키워드/등록)
+- [x] Step 2 — 타오바오 상품 수집기 (Playwright, 프로필 재사용)
+- [x] **Step 2.5 — 벤치마킹 소싱(이미지 검색)** ← 현재
+- [ ] Step 3 — 가공/키워드/가격계산 → 검수 → 스마트스토어/ESM 등록
 
 ## 폴더 구조
 ```
@@ -61,6 +62,22 @@ python collect.py "https://item.taobao.com/item.htm?id=..."             # produc
   세션이 저장되어 이후 유지됩니다.
 - `--dry-run` 은 DB 없이 추출 결과만 출력합니다(셀렉터 점검용).
 - 로그인/캡차가 보이면 그 창에서 직접 처리합니다(프로그램은 자동으로 뚫지 않음).
+
+## Step 2.5 실행 방법 (벤치마킹 소싱)
+잘 팔리는 기준 상품의 **이미지로 타오바오에서 유사 상품 N개**를 찾아 저장합니다.
+```bash
+cd 상품등록
+python apply_migration.py                 # 001 + 002(benchmark_seeds) 적용
+# 한국 마켓 상품 URL 로 (대표이미지 자동 추출)
+.venv\Scripts\python.exe bench.py --url "https://smartstore.naver.com/..." -n 3
+# 또는 로컬 이미지 파일로
+.venv\Scripts\python.exe bench.py --image "C:\사진\photo.jpg" -n 5 --dry-run
+```
+- `-n` 후보 개수(기본 3), `--dry-run` 저장없이 결과만, `--manual` 이미지검색을 창에서 직접.
+- 흐름: 씨앗 이미지 확보 → `benchmark_seeds` 기록 → 타오바오 이미지검색 → 후보 N개
+  → 각각 `taobao.py`로 추출 → `products_raw` 저장(`seed_id`·`match_rank` 연결).
+- 타오바오 이미지검색 결과 페이지는 봇차단이 강합니다. 자동이 막히면 `--manual` 로
+  창에서 직접 검색을 끝낸 뒤 링크를 수집합니다. 셀렉터는 첫 실전 후 조정될 수 있습니다.
 - 프로그램은 캡차를 자동으로 뚫지 않습니다(정책·차단 위험). 감지 시 멈추고 알려줍니다.
 - 타오바오 HTML 구조는 자주 바뀝니다. 추출이 비는 필드가 있으면 로그에 표시되며,
   `collector/taobao.py` 의 셀렉터를 실제 페이지에 맞게 조정해야 할 수 있습니다.
