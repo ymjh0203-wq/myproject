@@ -6,9 +6,9 @@
 > 흐름: **수집 → 가공 → 검수(사람) → 등록**
 
 ## 진행 단계
-- [x] **Step 1 — Supabase 스키마 설계/적용** ← 현재
-- [ ] Step 2 — 타오바오 상품 수집기 MVP
-- [ ] Step 3 — 이후 논의
+- [x] Step 1 — Supabase 스키마 설계
+- [x] **Step 2 — 타오바오 상품 수집기 MVP** ← 현재 (Playwright, 프로필 재사용)
+- [ ] Step 3 — 이후 논의 (가공/키워드/등록)
 
 ## 폴더 구조
 ```
@@ -16,6 +16,10 @@
 ├─ migrations/
 │  └─ 001_init.sql        # 초기 스키마 (5개 표 + 인덱스 + 트리거)
 ├─ apply_migration.py     # .sql 을 Supabase 에 적용하는 스크립트
+├─ collector/
+│  └─ taobao.py           # Playwright 타오바오 상세페이지 수집 + 캡차 감지
+├─ db.py                  # DATABASE_URL 연결 + products_raw upsert
+├─ collect.py             # CLI: python collect.py "<타오바오 URL>"
 ├─ requirements.txt
 ├─ .env.example           # DATABASE_URL 넣는 곳 (복사해서 .env 로)
 └─ README.md
@@ -43,6 +47,19 @@ pip install -r requirements.txt
 copy .env.example .env      # 그리고 .env 안의 DATABASE_URL 을 채우기
 python apply_migration.py    # migrations/*.sql 을 Supabase 에 적용
 ```
+
+## Step 2 실행 방법 (타오바오 수집)
+```bash
+cd 상품등록
+pip install -r requirements.txt
+playwright install chromium              # 브라우저 엔진 1회 설치
+python collect.py "https://item.taobao.com/item.htm?id=..."
+```
+- 처음 실행하면 크롬 창이 뜹니다. **로그인/캡차가 보이면 그 창에서 직접 처리**한 뒤
+  다시 실행하세요. 한 번 로그인하면 `.browser_profile/` 에 저장되어 유지됩니다.
+- 프로그램은 캡차를 자동으로 뚫지 않습니다(정책·차단 위험). 감지 시 멈추고 알려줍니다.
+- 타오바오 HTML 구조는 자주 바뀝니다. 추출이 비는 필드가 있으면 로그에 표시되며,
+  `collector/taobao.py` 의 셀렉터를 실제 페이지에 맞게 조정해야 할 수 있습니다.
 
 ## ⚠️ 정책/약관 메모
 - **타오바오 크롤링은 ToS 위반 소지·차단 위험**이 있어 Step 2 진입 전 방향을 재논의합니다
