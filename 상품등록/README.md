@@ -20,8 +20,9 @@
 ├─ collector/
 │  ├─ taobao.py           # Playwright 타오바오 상세페이지 수집 + 캡차 감지
 │  └─ taobao_image_search.py  # 타오바오 이미지검색(拍立淘) → 후보 URL
-├─ app.py                 # 웹 화면(Streamlit) — 벤치마킹 소싱
-├─ 벤치마킹소싱_실행.bat   # 웹 화면 실행 런처
+├─ app.py                 # 웹 앱 진입점(멀티페이지 셸, 퍼센티 모티브)
+├─ app_pages/             # 홈(대시보드)/벤치마킹 소싱/상품 가공/등록 상품 관리/설정
+├─ 벤치마킹소싱_실행.bat   # 웹 앱 실행 런처
 ├─ seed.py                # 씨앗 이미지 확보(한국 마켓 URL / 로컬 이미지)
 ├─ bench.py               # CLI 벤치마킹 소싱 진입점
 ├─ db.py                  # DATABASE_URL 연결 + products_raw upsert
