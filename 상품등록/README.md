@@ -22,7 +22,7 @@
 │  └─ taobao_image_search.py  # 타오바오 이미지검색(拍立淘) → 후보 URL
 ├─ app.py                 # 웹 앱 진입점(멀티페이지 셸, 퍼센티 모티브)
 ├─ app_pages/             # 홈(대시보드)/벤치마킹 소싱/상품 가공/등록 상품 관리/설정
-├─ 벤치마킹소싱_실행.bat   # 웹 앱 실행 런처
+├─ 상품등록_실행.bat       # 웹 앱 실행 런처(크롬으로 열림)
 ├─ seed.py                # 씨앗 이미지 확보(한국 마켓 URL / 로컬 이미지)
 ├─ bench.py               # CLI 벤치마킹 소싱 진입점
 ├─ db.py                  # DATABASE_URL 연결 + products_raw upsert
@@ -74,7 +74,7 @@ python collect.py "https://item.taobao.com/item.htm?id=..."             # produc
 
 ### 웹 화면(권장)
 ```bash
-벤치마킹소싱_실행.bat        # 더블클릭 → 브라우저에서 http://localhost:8503
+상품등록_실행.bat            # 더블클릭 → 크롬에서 http://localhost:8503
 ```
 URL 붙여넣기 또는 이미지 업로드 → 개수 슬라이더 → "유사 상품 찾기" → 후보를
 썸네일 카드로 보고 채택할 항목 선택 → "선택 항목 저장"(products_raw).
