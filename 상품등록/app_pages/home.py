@@ -55,6 +55,31 @@ def market_table(counts_by_market: dict) -> pd.DataFrame:
 st.title("홈")
 st.caption("타오바오 소싱 → 가공 → 스마트스토어·옥션/지마켓(ESM) 등록 현황")
 
+
+@st.cache_data(ttl=1800)
+def load_fx() -> dict:
+    import fx
+    return fx.get_rates()
+
+
+# ---- 실시간 환율 (무료 ECB 기준, 일 단위 갱신) ----
+with st.container(border=True):
+    try:
+        rate = load_fx()
+        head = st.columns([3, 1])
+        head[0].markdown("**실시간 환율**")
+        head[1].caption(f"{rate['date']} 기준 · ECB")
+        cols = st.columns(len(rate["rows"]))
+        for col, row in zip(cols, rate["rows"]):
+            up = row["change"] >= 0
+            arrow = "▲" if up else "▼"
+            color = "red" if up else "blue"
+            col.caption(f"{row['name']} ({row['code']})")
+            col.markdown(f"**{row['krw']:,.2f}원**")
+            col.markdown(f":{color}[{arrow} {abs(row['change']):.2f}%]")
+    except Exception:
+        st.caption("환율 정보를 불러오지 못했습니다(네트워크 확인).")
+
 try:
     c = load_counts()
 except Exception as e:
