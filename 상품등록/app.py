@@ -23,6 +23,7 @@ st.set_page_config(
 
 home = st.Page("app_pages/home.py", title="홈", icon=":material/home:", default=True)
 
+ai_sourcing = st.Page("app_pages/ai_sourcing.py", title="AI 소싱", icon=":material/auto_awesome:")
 sourcing = st.Page("app_pages/sourcing.py", title="벤치마킹 소싱", icon=":material/image_search:")
 new_product = st.Page("app_pages/new_product.py", title="신규 상품 등록", icon=":material/add_box:")
 products = st.Page("app_pages/products.py", title="등록 상품 관리", icon=":material/inventory_2:")
@@ -34,7 +35,7 @@ words = st.Page("app_pages/words.py", title="키워드/단어 설정", icon=":ma
 nav = st.navigation(
     {
         "": [home],
-        "상품 관리": [sourcing, new_product, products, groups],
+        "상품 관리": [ai_sourcing, sourcing, new_product, products, groups],
         "설정": [config_page, words],
     }
 )
