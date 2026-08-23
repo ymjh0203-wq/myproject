@@ -37,11 +37,21 @@ class CaptchaDetected(Exception):
     """캡차/로그인월이 감지되었을 때 던지는 예외 (자동 우회하지 않음)."""
 
 
-def _sleep_random(a: float = 2.0, b: float = 5.0) -> None:
-    """요청 사이에 사람처럼 랜덤하게 쉽니다 (차단 방지)."""
+def _sleep_random(a: float = 3.0, b: float = 7.0) -> None:
+    """요청 사이에 사람처럼 랜덤하게 쉽니다 (계정 동결/차단 방지)."""
     delay = random.uniform(a, b)
     logger.debug("랜덤 딜레이 %.1f초", delay)
     time.sleep(delay)
+
+
+def _human_scroll(page, rounds: tuple[int, int] = (2, 4)) -> None:
+    """사람처럼 천천히 스크롤해 봇 탐지를 줄입니다."""
+    try:
+        for _ in range(random.randint(*rounds)):
+            page.mouse.wheel(0, random.randint(300, 800))
+            time.sleep(random.uniform(0.8, 1.8))
+    except Exception:
+        pass
 
 
 def _extract_item_id(url: str) -> str | None:
@@ -208,6 +218,9 @@ def collect_taobao(url: str, profile_dir: str | None = None, headless: bool = Fa
                 page.wait_for_load_state("networkidle", timeout=10000)
             except PWTimeoutError:
                 pass
+
+            # 사람처럼 천천히 스크롤(차단 방지)
+            _human_scroll(page)
 
             title = _text_or_none(
                 page, ["h1", ".tb-main-title", "[class*='ItemTitle']", "#J_Title .tb-main-title"]

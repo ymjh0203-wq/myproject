@@ -24,7 +24,9 @@
 import argparse
 import json
 import logging
+import random
 import sys
+import time
 
 import seed as seed_mod
 from collector.taobao import CaptchaDetected, collect_taobao
@@ -86,6 +88,11 @@ def main() -> None:
     # 3) 각 후보를 추출
     results = []
     for rank, url in enumerate(candidates, start=1):
+        if rank > 1:
+            # 계정 동결 방지: 상품 사이에 넉넉히 쉼
+            wait_s = random.uniform(8, 18)
+            logger.info("차단 방지 대기 %.0f초...", wait_s)
+            time.sleep(wait_s)
         try:
             logger.info("후보 %d 추출 중...", rank)
             data = collect_taobao(url)

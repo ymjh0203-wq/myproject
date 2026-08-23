@@ -9,6 +9,8 @@
 # ============================================================
 
 import os
+import random
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
@@ -96,6 +98,11 @@ if submitted:
 
             results = []
             for rank, cand in enumerate(candidates, start=1):
+                if rank > 1:
+                    # 계정 동결 방지: 상품 사이에 넉넉히 쉼(사람처럼)
+                    wait_s = random.uniform(8, 18)
+                    st.write(f"  (차단 방지 대기 {wait_s:.0f}초...)")
+                    time.sleep(wait_s)
                 st.write(f"  {rank}번 후보 추출 중...")
                 try:
                     data = run_in_thread(collect_taobao, cand)
