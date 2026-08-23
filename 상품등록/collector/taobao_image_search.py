@@ -5,23 +5,21 @@
 # 방식:
 #   - login_setup.py 로 만든 고정 프로필(로그인 유지) 을 재사용합니다.
 #   - 이미지 파일을 업로드해 검색하고, 결과에서 상품 상세 URL 을 N개 모읍니다.
-#   - 캡차/차단이 뜨면 자동으로 뚫지 않습니다.
-#       * manual=False: CaptchaDetected 예외로 알림
-#       * manual=True : 보이는 창에서 사용자가 직접 검색을 끝내도록 기다린 뒤
-#                       현재 결과 페이지에서 링크를 긁습니다(폴백).
+#   - 캡차가 뜨면 자동으로 뚫지 않고, 보이는 창에서 사용자가 직접 처리하는 동안
+#     결과가 뜨기를 기다립니다(폴링).
 #
-# 주의: 타오바오 검색결과 페이지 구조는 자주 바뀌고 봇차단이 강합니다.
-#       아래 셀렉터/흐름은 첫 실전 후 실제 페이지에 맞게 다듬어야 할 수 있습니다.
+# 진단: 잘 안 될 때를 대비해 seeds/ 폴더에 디버그 스크린샷을 남기고,
+#       페이지 URL/제목/후보요소 개수를 로그로 남깁니다(원인 파악용).
 # ============================================================
 
 import logging
+import os
 import re
 import time
 
 from playwright.sync_api import TimeoutError as PWTimeoutError
 from playwright.sync_api import sync_playwright
 
-# taobao.py 의 공통 유틸(프로필 경로, 캡차 감지, 랜덤 딜레이, 예외)을 재사용
 from collector.taobao import (
     CaptchaDetected,
     DEFAULT_PROFILE_DIR,
@@ -32,11 +30,12 @@ from collector.taobao import (
 logger = logging.getLogger("taobao_image_search")
 
 TAOBAO_HOME = "https://www.taobao.com"
+SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "seeds")
 
-# 이미지 업로드용 input[type=file] 후보 셀렉터 (버전에 따라 다름)
+# 이미지 업로드용 input[type=file] 후보
 _FILE_INPUT_SELECTORS = [
-    "input.search-img-upload",
     "input[type='file']",
+    "input.search-img-upload",
     "#J_ImgSearchUpload input[type='file']",
 ]
 
@@ -45,25 +44,55 @@ _CAMERA_SELECTORS = [
     "#J_ImgSearch",
     ".icon-camera",
     "[class*='camera']",
-    "[class*='imgSearch']",
+    "[class*='imgsearch' i]",
+    "[class*='ImageSearch']",
+    "[aria-label*='图片']",
+    "[title*='图片']",
 ]
 
 
+def _dump_debug(page, tag: str) -> str | None:
+    """현재 페이지를 seeds/debug_{tag}.png 로 저장하고 경로를 반환(원인 파악용)."""
+    try:
+        os.makedirs(SEEDS_DIR, exist_ok=True)
+        path = os.path.join(SEEDS_DIR, f"debug_{tag}.png")
+        page.screenshot(path=path)
+        logger.info("[진단] %s | url=%s | title=%s | shot=%s",
+                    tag, page.url, page.title(), path)
+        return path
+    except Exception as e:
+        logger.info("[진단] 스크린샷 실패(%s): %s", tag, e)
+        return None
+
+
+def _find_file_input(page):
+    """페이지(및 iframe)에서 파일 업로드 input 을 찾습니다."""
+    for sel in _FILE_INPUT_SELECTORS:
+        loc = page.locator(sel).first
+        try:
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
+    return None
+
+
 def _collect_item_links(page, n: int) -> list[str]:
-    """결과 페이지에서 상품 상세 URL 을 순서대로 최대 n개 모읍니다(중복 제거)."""
+    """결과 페이지에서 상품 상세 URL 을 최대 n개 모읍니다(중복 제거)."""
     links: list[str] = []
     anchors = page.locator("a[href*='item.taobao.com'], a[href*='detail.tmall.com']")
-    total = anchors.count()
+    try:
+        total = anchors.count()
+    except Exception:
+        return links
     for i in range(total):
         href = anchors.nth(i).get_attribute("href")
         if not href:
             continue
         if href.startswith("//"):
             href = "https:" + href
-        # id 파라미터가 있는 진짜 상품 링크만
         if "id=" not in href:
             continue
-        # 같은 상품(id) 중복 제거
         m = re.search(r"[?&]id=(\d+)", href)
         key = m.group(1) if m else href
         if all(key not in u for u in links):
@@ -77,18 +106,14 @@ def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
                  manual: bool = False, poll_seconds: int = 90) -> list[str]:
     """
     이미지 파일로 타오바오를 검색해 유사 상품 상세 URL 을 최대 n개 반환합니다.
-
-    - manual=False(기본): 이미지를 자동 업로드한 뒤, 결과가 나올 때까지 poll_seconds 동안
-      기다립니다. 그 사이 캡차가 뜨면 사용자가 "보이는 창"에서 직접 풀면 되고, 결과가
-      뜨는 순간 자동으로 링크를 수집합니다. (웹 UI에서 쓰는 경로 — input() 없음)
-    - manual=True: 사용자가 창에서 직접 검색을 끝내고 터미널에서 Enter (CLI 전용).
+    캡차가 뜨면 보이는 창에서 사용자가 직접 처리하고, 결과가 뜨면 자동 수집합니다.
     """
     profile_dir = profile_dir or DEFAULT_PROFILE_DIR
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             profile_dir,
-            headless=False,   # 이미지검색은 항상 화면 보이게(캡차 대응)
+            headless=False,
             locale="zh-CN",
             viewport={"width": 1366, "height": 900},
             args=["--disable-blink-features=AutomationControlled"],
@@ -98,49 +123,47 @@ def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
             logger.info("타오바오 홈 여는 중...")
             page.goto(TAOBAO_HOME, wait_until="domcontentloaded", timeout=60000)
             _sleep_random()
+            _dump_debug(page, "01_home")
 
-            if manual:
-                # 폴백 경로: 사람이 직접 카메라 아이콘으로 이미지 업로드/검색을 끝냄
-                print("\n[수동 모드] 열린 타오바오 창에서 직접:")
-                print(f"   1) 검색창의 카메라(이미지검색) 아이콘 클릭")
-                print(f"   2) 이 이미지 업로드:  {image_path}")
-                print("   3) 검색 결과가 보이면 이 터미널로 돌아와 Enter")
-                input("결과 페이지가 뜨면 Enter를 눌러주세요... ")
-            else:
-                # 자동 경로: 숨은 file input 을 찾아 이미지 주입
-                file_input = None
-                for sel in _FILE_INPUT_SELECTORS:
-                    loc = page.locator(sel).first
-                    if loc.count() > 0:
-                        file_input = loc
-                        break
+            uploaded = False
+            if not manual:
+                # 전략1: 이미 있는 hidden file input
+                file_input = _find_file_input(page)
+                # 전략2: 카메라 클릭 → file chooser 로 업로드
                 if file_input is None:
-                    # 카메라 아이콘을 눌러 input 을 노출시켜 본다
                     for sel in _CAMERA_SELECTORS:
                         cam = page.locator(sel).first
-                        if cam.count() > 0:
-                            try:
+                        try:
+                            if cam.count() == 0:
+                                continue
+                            with page.expect_file_chooser(timeout=4000) as fc:
                                 cam.click(timeout=3000)
-                                _sleep_random(1.0, 2.0)
-                            except Exception:
-                                pass
+                            fc.value.set_input_files(image_path)
+                            uploaded = True
+                            logger.info("[업로드] file chooser 방식 성공(%s)", sel)
                             break
-                    for sel in _FILE_INPUT_SELECTORS:
-                        loc = page.locator(sel).first
-                        if loc.count() > 0:
-                            file_input = loc
-                            break
-                if file_input is None:
-                    raise CaptchaDetected(
-                        "이미지검색 업로드 칸을 찾지 못했습니다. "
-                        "--manual 로 다시 실행해 창에서 직접 검색해주세요."
-                    )
+                        except Exception:
+                            # 클릭으로 hidden input 이 생겼을 수도 있으니 재탐색
+                            file_input = _find_file_input(page)
+                            if file_input is not None:
+                                break
+                            continue
+                # 전략3: (전략1/2에서 찾은) file input 에 직접 주입
+                if not uploaded and file_input is not None:
+                    file_input.set_input_files(image_path)
+                    uploaded = True
+                    logger.info("[업로드] hidden input 방식 성공")
 
-                logger.info("이미지 업로드 중: %s", image_path)
-                file_input.set_input_files(image_path)
+                if not uploaded:
+                    _dump_debug(page, "02_no_upload")
+                    raise CaptchaDetected(
+                        "이미지검색 업로드 칸을 자동으로 찾지 못했습니다. "
+                        "뜬 창에서 검색창의 카메라 아이콘으로 직접 이미지를 올려 검색해 주세요"
+                        "(그러면 결과가 뜨는 대로 자동으로 이어받습니다)."
+                    )
                 _sleep_random(2.0, 4.0)
 
-            # 결과가 나올 때까지 폴링(그 사이 캡차는 사용자가 창에서 직접 처리 가능)
+            # 결과가 나올 때까지 폴링(그 사이 캡차/수동 업로드는 창에서 처리)
             deadline = time.time() + poll_seconds
             links: list[str] = []
             while time.time() < deadline:
@@ -151,19 +174,17 @@ def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
                 links = _collect_item_links(page, n)
                 if links:
                     break
-                # 아직 결과가 없으면(로딩 중이거나 캡차 대기) 잠시 후 재확인
                 _sleep_random(2.5, 4.0)
 
             logger.info("후보 상품 링크 %d개 수집", len(links))
             if not links:
+                _dump_debug(page, "03_result_empty")
                 if _looks_like_captcha(page):
                     raise CaptchaDetected(
-                        "제한시간 안에 결과가 뜨지 않았습니다(캡차/차단 가능). "
-                        "열린 창에서 검색을 끝낸 뒤 다시 시도하거나, 시간을 늘려주세요."
+                        "제한시간 안에 결과가 안 떴습니다(캡차/차단 가능). "
+                        "열린 창에서 검색을 끝낸 뒤 다시 시도하거나 대기시간을 늘려주세요."
                     )
-                logger.warning(
-                    "결과에서 상품 링크를 못 찾았습니다. 셀렉터 조정이 필요할 수 있습니다."
-                )
+                logger.warning("결과에서 상품 링크를 못 찾았습니다(셀렉터 조정 필요할 수 있음).")
             return links
         finally:
             context.close()
