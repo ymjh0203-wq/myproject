@@ -19,6 +19,8 @@ from playwright.sync_api import sync_playwright
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SEEDS_DIR = os.path.join(BASE_DIR, "seeds")
+# 네이버용 고정 프로필(headful) — 봇 차단 우회용. 쿠키가 쌓여 더 사람처럼 보임.
+NAVER_PROFILE_DIR = os.path.join(BASE_DIR, ".naver_profile")
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -73,12 +75,19 @@ def image_from_url(product_url: str) -> dict:
     반환: {"seed_type":"url", "seed_ref": url, "seed_image_url": ..., "seed_image_path": ...}
     """
     product_url = product_url.strip()
+    os.makedirs(NAVER_PROFILE_DIR, exist_ok=True)
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        # headful(화면 보이는 실제 브라우저) + 고정 프로필 → 네이버 봇 차단 우회
+        context = p.chromium.launch_persistent_context(
+            NAVER_PROFILE_DIR,
+            headless=False,
+            locale="ko-KR",
+            user_agent=_UA,
+            viewport={"width": 1366, "height": 900},
+            args=["--disable-blink-features=AutomationControlled"],
+        )
         try:
-            page = browser.new_page(
-                user_agent=_UA, viewport={"width": 1280, "height": 1600}
-            )
+            page = context.pages[0] if context.pages else context.new_page()
             page.goto(product_url, wait_until="load", timeout=45000)
             # 지연 로딩 이미지 대비 살짝 스크롤
             for _ in range(3):
@@ -137,7 +146,7 @@ def image_from_url(product_url: str) -> dict:
 
             local_path = _download(image_url, referer=product_url)
         finally:
-            browser.close()
+            context.close()
 
     return {
         "seed_type": "url",
