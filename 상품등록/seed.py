@@ -60,6 +60,8 @@ def _is_junk_image(url: str) -> bool:
         return True
     if u.endswith(".svg"):
         return True
+    if u.startswith("data:"):          # base64 지연로딩 임시 이미지(플레이스홀더)
+        return True
     junk_marks = ("/login/", "/nid/", "static/nid", "icon-", "sprite", "blank",
                   "/common/", "placeholder", "loading")
     return any(m in u for m in junk_marks)
@@ -81,7 +83,14 @@ def image_from_url(product_url: str) -> dict:
             # 지연 로딩 이미지 대비 살짝 스크롤
             for _ in range(3):
                 page.mouse.wheel(0, 1500)
-                time.sleep(0.4)
+                time.sleep(0.5)
+            # 진짜 이미지가 로드될 시간을 줌(base64 임시이미지 회피)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
+            page.mouse.wheel(0, -3000)
+            time.sleep(0.5)
 
             # 봇 차단으로 로그인 페이지로 튕겼는지 먼저 확인
             final_url = (page.url or "").lower()
@@ -101,22 +110,29 @@ def image_from_url(product_url: str) -> dict:
                     if c:
                         candidates.append(c)
             for sel in (
-                "img#repImage",                      # 스마트스토어 계열
+                "img#repImage",                      # 스마트스토어 대표이미지
+                "[class*='_23RpOU6xpc'] img",        # 스마트스토어 상단 갤러리 계열
                 ".prod-image__detail img",           # 쿠팡 계열
                 "[class*='thumb'] img",
                 "img",
             ):
-                loc = page.locator(sel).first
-                if loc.count() > 0:
-                    c = loc.get_attribute("src") or loc.get_attribute("data-src")
+                imgs = page.locator(sel)
+                for i in range(min(imgs.count(), 8)):
+                    el = imgs.nth(i)
+                    c = el.get_attribute("src") or el.get_attribute("data-src") or el.get_attribute("srcset")
                     if c:
-                        candidates.append(c)
+                        candidates.append(c.split()[0])  # srcset 이면 첫 URL만
 
-            image_url = next((c for c in candidates if not _is_junk_image(c)), None)
+            # 진짜 상품 이미지(http/https, 쓰레기 아님) 우선 선택
+            image_url = next(
+                (c for c in candidates
+                 if not _is_junk_image(c) and (c.startswith("http") or c.startswith("//"))),
+                None,
+            )
             if not image_url:
                 raise RuntimeError(
-                    "상품 대표이미지를 찾지 못했습니다(로그인/아이콘 이미지만 잡힘). "
-                    "상품 이미지를 직접 업로드하거나 스마트스토어 상품 상세 URL을 넣어주세요."
+                    "네이버가 봇 차단으로 페이지를 덜 보내줘서 상품 이미지를 자동으로 "
+                    "못 가져왔습니다. 가장 확실한 방법은 상품 이미지를 직접 '업로드'하는 것입니다."
                 )
 
             local_path = _download(image_url, referer=product_url)
