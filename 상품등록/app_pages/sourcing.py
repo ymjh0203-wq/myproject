@@ -23,6 +23,27 @@ from collector.taobao_image_search import image_search
 SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "seeds")
 
 
+# 환경 진단: 이 페이지가 실제로 어떤 파이썬/플레이라이트/브라우저 경로를 쓰는지 기록
+try:
+    import sys as _sys
+    import playwright as _pw
+    import importlib.metadata as _md
+    os.makedirs(SEEDS_DIR, exist_ok=True)
+    _mp = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
+    with open(os.path.join(SEEDS_DIR, "env_diag.txt"), "w", encoding="utf-8") as _f:
+        _f.write(f"sys.executable = {_sys.executable}\n")
+        _f.write(f"sys.prefix     = {_sys.prefix}\n")
+        _f.write(f"playwright     = {_pw.__file__}\n")
+        _f.write(f"pw.version     = {_md.version('playwright')}\n")
+        _f.write(f"LOCALAPPDATA   = {os.environ.get('LOCALAPPDATA')}\n")
+        _f.write(f"PLAYWRIGHT_BROWSERS_PATH = {os.environ.get('PLAYWRIGHT_BROWSERS_PATH','(none)')}\n")
+        _f.write(f"ms-playwright  = {sorted(os.listdir(_mp)) if os.path.isdir(_mp) else 'MISSING'}\n")
+        _chrome = os.path.join(_mp, "chromium-1234", "chrome-win64", "chrome.exe")
+        _f.write(f"chrome.exe 1234 exists = {os.path.exists(_chrome)}\n")
+except Exception:
+    pass
+
+
 def log_error(where: str, err: Exception) -> None:
     """오류 전체 내용을 seeds/last_error.txt 에 남깁니다(원인 파악용)."""
     try:
