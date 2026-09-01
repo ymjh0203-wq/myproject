@@ -20,7 +20,9 @@ if exist "%LocalAppData%\Google\Chrome\Application\chrome.exe" set "CHROME=%Loca
 REM Wait for the server, then open Chrome (separate hidden window)
 start "" powershell -WindowStyle Hidden -Command "Start-Sleep 4; Start-Process '%CHROME%' '%URL%'"
 
-REM Start the Streamlit server (headless so it won't open the default browser)
-.venv\Scripts\streamlit.exe run app.py --server.headless=true --server.port 8503
+REM Start the Streamlit server via the venv PYTHON explicitly.
+REM (Running streamlit.exe directly could resolve to the system Python, which
+REM  can't find the Playwright browser — using python.exe -m avoids that.)
+.venv\Scripts\python.exe -m streamlit run app.py --server.headless=true --server.port 8503
 
 pause
