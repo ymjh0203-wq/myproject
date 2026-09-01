@@ -1,6 +1,9 @@
 @echo off
 cd /d "%~dp0"
 
+REM Kill any previous server holding port 8503 (prevents stale duplicates)
+for /f "tokens=5" %%p in ('netstat -aon ^| findstr ":8503" ^| findstr "LISTENING"') do taskkill /f /pid %%p >nul 2>&1
+
 set "URL=http://localhost:8503"
 set "CHROME=chrome"
 if exist "%ProgramFiles%\Google\Chrome\Application\chrome.exe" set "CHROME=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
