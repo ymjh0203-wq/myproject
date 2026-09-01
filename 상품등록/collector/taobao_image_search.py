@@ -77,10 +77,23 @@ def _find_file_input(page):
     return None
 
 
+def _is_results_page(page) -> bool:
+    """지금이 '이미지 검색 결과' 페이지인지(홈페이지 추천상품 오인 방지)."""
+    u = (page.url or "").lower()
+    return any(k in u for k in (
+        "s.taobao.com", "/search", "pailitao", "imgsearch", "imgextra", "tab=all"
+    ))
+
+
 def _collect_item_links(page, n: int) -> list[str]:
-    """결과 페이지에서 상품 상세 URL 을 최대 n개 모읍니다(중복 제거)."""
+    """검색 결과 페이지에서 상품 상세 URL 을 최대 n개 모읍니다(중복 제거)."""
     links: list[str] = []
-    anchors = page.locator("a[href*='item.taobao.com'], a[href*='detail.tmall.com']")
+    # 홈페이지 등에서 추천상품을 잘못 긁지 않도록 결과 페이지에서만 수집
+    if not _is_results_page(page):
+        return links
+    anchors = page.locator(
+        "a[href*='item.taobao.com'], a[href*='detail.tmall.com'], a[href*='item.htm']"
+    )
     try:
         total = anchors.count()
     except Exception:
@@ -91,15 +104,28 @@ def _collect_item_links(page, n: int) -> list[str]:
             continue
         if href.startswith("//"):
             href = "https:" + href
-        if "id=" not in href:
-            continue
         m = re.search(r"[?&]id=(\d+)", href)
-        key = m.group(1) if m else href
+        if not m:
+            continue
+        key = m.group(1)
         if all(key not in u for u in links):
             links.append(href)
         if len(links) >= n:
             break
     return links
+
+
+def _dump_links_diag(page) -> None:
+    """결과가 안 잡힐 때, 현재 페이지의 링크 샘플을 파일로 남깁니다(파싱 진단용)."""
+    try:
+        hrefs = page.eval_on_selector_all(
+            "a", "els => els.map(e => e.href).filter(Boolean).slice(0, 60)"
+        )
+        with open(os.path.join(SEEDS_DIR, "debug_taobao_links.txt"), "w", encoding="utf-8") as f:
+            f.write(f"url={page.url}\ntitle={page.title()}\nis_results={_is_results_page(page)}\n\n")
+            f.write("\n".join(hrefs))
+    except Exception:
+        pass
 
 
 def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
@@ -179,6 +205,7 @@ def image_search(image_path: str, n: int = 3, profile_dir: str | None = None,
             logger.info("후보 상품 링크 %d개 수집", len(links))
             if not links:
                 _dump_debug(page, "03_result_empty")
+                _dump_links_diag(page)
                 if _looks_like_captcha(page):
                     raise CaptchaDetected(
                         "제한시간 안에 결과가 안 떴습니다(캡차/차단 가능). "
