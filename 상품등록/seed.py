@@ -11,6 +11,7 @@
 # ============================================================
 
 import hashlib
+import json
 import os
 import time
 import urllib.request
@@ -69,6 +70,17 @@ def _is_junk_image(url: str) -> bool:
     return any(m in u for m in junk_marks)
 
 
+def _dump_seed_debug(page, info: dict) -> None:
+    """네이버 페이지에서 실제로 뭘 받았는지 seeds/ 에 스크린샷+정보로 남깁니다(원인 파악용)."""
+    try:
+        _ensure_seeds_dir()
+        page.screenshot(path=os.path.join(SEEDS_DIR, "debug_seed.png"))
+        with open(os.path.join(SEEDS_DIR, "debug_seed.txt"), "w", encoding="utf-8") as f:
+            f.write(json.dumps(info, ensure_ascii=False, indent=2)[:8000])
+    except Exception:
+        pass
+
+
 def image_from_url(product_url: str) -> dict:
     """
     한국 마켓 상품 URL에서 대표이미지를 찾아 내려받습니다.
@@ -89,59 +101,55 @@ def image_from_url(product_url: str) -> dict:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(product_url, wait_until="load", timeout=45000)
-            # 지연 로딩 이미지 대비 살짝 스크롤
-            for _ in range(3):
-                page.mouse.wheel(0, 1500)
-                time.sleep(0.5)
-            # 진짜 이미지가 로드될 시간을 줌(base64 임시이미지 회피)
+            # 상품 이미지가 렌더될 시간을 충분히 줌(지연로딩 대응)
             try:
                 page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
-            page.mouse.wheel(0, -3000)
-            time.sleep(0.5)
+            for _ in range(4):
+                page.mouse.wheel(0, 1200)
+                time.sleep(0.6)
+            page.mouse.wheel(0, -6000)
+            time.sleep(1.0)
 
-            # 봇 차단으로 로그인 페이지로 튕겼는지 먼저 확인
+            # 봇 차단으로 로그인 페이지로 튕겼는지 확인
             final_url = (page.url or "").lower()
             if any(k in final_url for k in ("nid.naver", "/login", "nidlogin", "captcha")):
+                _dump_seed_debug(page, {"reason": "login_redirect", "url": page.url})
                 raise RuntimeError(
-                    "네이버 쇼핑 카탈로그/검색 페이지는 봇 차단이 있어 자동 추출이 막혔습니다"
-                    "(로그인 페이지로 튕김). 상품 이미지를 직접 업로드하거나, 판매자의"
-                    " 스마트스토어 '상품 상세' URL을 넣어주세요."
+                    "네이버 로그인/차단 페이지로 튕겼습니다. 상품 이미지를 직접 '업로드'해 주세요."
                 )
 
-            # og:image → 메인 갤러리 순으로, '쓰레기 이미지'는 걸러가며 후보 수집
-            candidates: list[str] = []
-            for attr in ("property", "name"):
-                loc = page.locator(f'meta[{attr}="og:image"]').first
-                if loc.count() > 0:
-                    c = loc.get_attribute("content")
-                    if c:
-                        candidates.append(c)
-            for sel in (
-                "img#repImage",                      # 스마트스토어 대표이미지
-                "[class*='_23RpOU6xpc'] img",        # 스마트스토어 상단 갤러리 계열
-                ".prod-image__detail img",           # 쿠팡 계열
-                "[class*='thumb'] img",
-                "img",
-            ):
-                imgs = page.locator(sel)
-                for i in range(min(imgs.count(), 8)):
-                    el = imgs.nth(i)
-                    c = el.get_attribute("src") or el.get_attribute("data-src") or el.get_attribute("srcset")
-                    if c:
-                        candidates.append(c.split()[0])  # srcset 이면 첫 URL만
+            # JS로 og:image + 실제 이미지 URL 수집(currentSrc 로 지연로딩까지 반영)
+            info = page.evaluate(
+                """() => {
+                    const meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+                    const og = meta ? meta.content : null;
+                    const imgs = [...document.querySelectorAll('img')].map(i => ({
+                        src: i.currentSrc || i.src || i.getAttribute('data-src') || '',
+                        w: i.naturalWidth || 0, h: i.naturalHeight || 0
+                    })).filter(o => o.src.startsWith('http'));
+                    return {og, imgs, title: document.title, url: location.href};
+                }"""
+            )
+            # 진단: 스크린샷 + 수집결과 저장(원인 확인용)
+            _dump_seed_debug(page, info)
 
-            # 진짜 상품 이미지(http/https, 쓰레기 아님) 우선 선택
+            candidates: list[str] = []
+            if info.get("og"):
+                candidates.append(info["og"])
+            # 면적 큰 이미지 우선(작은 아이콘/썸네일 회피)
+            big = sorted(info.get("imgs", []), key=lambda o: o["w"] * o["h"], reverse=True)
+            candidates += [o["src"] for o in big]
+
             image_url = next(
-                (c for c in candidates
-                 if not _is_junk_image(c) and (c.startswith("http") or c.startswith("//"))),
+                (c for c in candidates if not _is_junk_image(c) and c.startswith("http")),
                 None,
             )
             if not image_url:
                 raise RuntimeError(
-                    "네이버가 봇 차단으로 페이지를 덜 보내줘서 상품 이미지를 자동으로 "
-                    "못 가져왔습니다. 가장 확실한 방법은 상품 이미지를 직접 '업로드'하는 것입니다."
+                    "상품 이미지를 못 찾았습니다(seeds/debug_seed.png 확인). "
+                    "상품 이미지를 직접 '업로드'해 주세요."
                 )
 
             local_path = _download(image_url, referer=product_url)
