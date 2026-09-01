@@ -101,55 +101,57 @@ def image_from_url(product_url: str) -> dict:
         try:
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(product_url, wait_until="load", timeout=45000)
-            # 상품 이미지가 렌더될 시간을 충분히 줌(지연로딩 대응)
-            try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            for _ in range(4):
-                page.mouse.wheel(0, 1200)
-                time.sleep(0.6)
-            page.mouse.wheel(0, -6000)
-            time.sleep(1.0)
 
-            # 봇 차단으로 로그인 페이지로 튕겼는지 확인
-            final_url = (page.url or "").lower()
-            if any(k in final_url for k in ("nid.naver", "/login", "nidlogin", "captcha")):
-                _dump_seed_debug(page, {"reason": "login_redirect", "url": page.url})
-                raise RuntimeError(
-                    "네이버 로그인/차단 페이지로 튕겼습니다. 상품 이미지를 직접 '업로드'해 주세요."
-                )
+            # 페이지에서 og:image + 실제 이미지 URL 을 뽑는 JS
+            JS = """() => {
+                const meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
+                const og = meta ? meta.content : null;
+                const imgs = [...document.querySelectorAll('img')].map(i => ({
+                    src: i.currentSrc || i.src || i.getAttribute('data-src') || '',
+                    w: i.naturalWidth || 0, h: i.naturalHeight || 0
+                })).filter(o => o.src.startsWith('http'));
+                return {og, imgs, title: document.title, url: location.href};
+            }"""
 
-            # JS로 og:image + 실제 이미지 URL 수집(currentSrc 로 지연로딩까지 반영)
-            info = page.evaluate(
-                """() => {
-                    const meta = document.querySelector('meta[property="og:image"], meta[name="og:image"]');
-                    const og = meta ? meta.content : null;
-                    const imgs = [...document.querySelectorAll('img')].map(i => ({
-                        src: i.currentSrc || i.src || i.getAttribute('data-src') || '',
-                        w: i.naturalWidth || 0, h: i.naturalHeight || 0
-                    })).filter(o => o.src.startsWith('http'));
-                    return {og, imgs, title: document.title, url: location.href};
-                }"""
-            )
-            # 진단: 스크린샷 + 수집결과 저장(원인 확인용)
-            _dump_seed_debug(page, info)
+            def _pick(info: dict):
+                cands = []
+                if info.get("og"):
+                    cands.append(info["og"])
+                big = sorted(info.get("imgs", []), key=lambda o: o["w"] * o["h"], reverse=True)
+                cands += [o["src"] for o in big]
+                return next((c for c in cands if not _is_junk_image(c) and c.startswith("http")), None)
 
-            candidates: list[str] = []
-            if info.get("og"):
-                candidates.append(info["og"])
-            # 면적 큰 이미지 우선(작은 아이콘/썸네일 회피)
-            big = sorted(info.get("imgs", []), key=lambda o: o["w"] * o["h"], reverse=True)
-            candidates += [o["src"] for o in big]
+            # 네이버 보안확인(캡차)이 뜨면 창을 열어두고, 사용자가 인증을 끝내
+            # 진짜 상품 페이지가 뜰 때까지 최대 180초 기다린다(폴링).
+            deadline = time.time() + 180
+            image_url = None
+            info: dict = {}
+            while time.time() < deadline:
+                try:
+                    page.wait_for_load_state("networkidle", timeout=4000)
+                except Exception:
+                    pass
+                # 지연로딩 유도(살짝 스크롤)
+                try:
+                    page.mouse.wheel(0, 1500)
+                    time.sleep(0.4)
+                    page.mouse.wheel(0, -1500)
+                except Exception:
+                    pass
+                try:
+                    info = page.evaluate(JS)
+                except Exception:
+                    info = {}
+                image_url = _pick(info)
+                if image_url:
+                    break
+                time.sleep(3)  # 아직 없음(캡차 대기/로딩 중) → 잠시 후 재확인
 
-            image_url = next(
-                (c for c in candidates if not _is_junk_image(c) and c.startswith("http")),
-                None,
-            )
+            _dump_seed_debug(page, info or {"reason": "no_info"})
             if not image_url:
                 raise RuntimeError(
-                    "상품 이미지를 못 찾았습니다(seeds/debug_seed.png 확인). "
-                    "상품 이미지를 직접 '업로드'해 주세요."
+                    "제한시간(180초) 안에 상품 이미지를 못 가져왔습니다. 네이버 보안확인이 "
+                    "떴다면 그 창에서 인증을 끝낸 뒤 다시 시도해 주세요."
                 )
 
             local_path = _download(image_url, referer=product_url)
