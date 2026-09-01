@@ -11,6 +11,7 @@
 import os
 import random
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
@@ -20,6 +21,17 @@ from collector.taobao import CaptchaDetected, collect_taobao
 from collector.taobao_image_search import image_search
 
 SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "seeds")
+
+
+def log_error(where: str, err: Exception) -> None:
+    """오류 전체 내용을 seeds/last_error.txt 에 남깁니다(원인 파악용)."""
+    try:
+        os.makedirs(SEEDS_DIR, exist_ok=True)
+        with open(os.path.join(SEEDS_DIR, "last_error.txt"), "w", encoding="utf-8") as f:
+            f.write(f"[{where}] {type(err).__name__}: {err}\n\n")
+            f.write(traceback.format_exc())
+    except Exception:
+        pass
 
 
 def run_in_thread(fn, *args, **kwargs):
@@ -113,10 +125,12 @@ if submitted:
             st.session_state.results = results
             status.update(label=f"완료 — {len(results)}개 후보 추출", state="complete")
         except CaptchaDetected as e:
+            log_error("captcha", e)
             status.update(label="캡차/차단으로 중단", state="error")
             st.error(f"{e}", icon=":material/report:")
             st.stop()
         except Exception as e:
+            log_error("sourcing", e)
             status.update(label="오류로 중단", state="error")
             st.error(f"진행 중 오류: {e}", icon=":material/report:")
             st.stop()
