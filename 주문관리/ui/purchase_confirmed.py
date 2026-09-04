@@ -4,11 +4,11 @@
 # 다른 단계 화면과 같은 형식(엑셀 양식 전체 컬럼 표 + 너비/높이 조절 슬라이더 +
 # 클릭 시 상세정보)으로 목록을 보여줍니다.
 #
-# "수집하기" 버튼은 아직 없습니다: 쿠팡 공식 문서에서 "구매확정" 상태를 판매자가
-# 직접 조회/변경하는 API를 아직 확인하지 못했습니다 (보통 구매자가 직접 누르거나
-# 일정 기간 후 쿠팡이 자동으로 처리하는 것으로 보입니다). 확인되지 않은 API를
-# 지어내서 연결하지 않았기 때문에, 지금은 다른 화면에서 이미 이 상태로 저장된
-# 주문이 있을 때만 목록에 나타납니다.
+# "수집하기" 버튼은 없습니다: 쿠팡에 '구매확정' 상태를 판매자가 직접 조회/변경하는
+# 공식 API가 없기 때문입니다. 대신, 배송완료 화면에서 '수집하기'를 누르면 주문 후
+# 30일이 지난 배송완료 주문이 자동으로 이 구매확정 단계로 넘어옵니다
+# (services/sync_service.advance_confirmed_orders). 쿠팡은 배송완료 후 일정 기간이
+# 지나면 구매확정으로 자동 처리되는데, 원본에 배송완료 날짜가 없어 '주문일'로 판단합니다.
 # ==========================================================
 
 import streamlit as st
@@ -21,8 +21,8 @@ from ui import common
 def render() -> None:
     st.header("구매확정")
     st.caption(
-        "쿠팡이 '구매확정' 상태를 판매자가 직접 조회/변경하는 공식 API를 아직 확인하지 못해서, "
-        "이 화면에는 '수집하기' 버튼이 없습니다. API가 확인되면 다른 단계 화면처럼 추가할 예정입니다."
+        "배송완료 화면에서 '수집하기'를 누르면 **주문 후 30일이 지난 배송완료 주문**이 "
+        "자동으로 여기(구매확정)로 넘어옵니다. (쿠팡에 구매확정 조회 API가 없어 주문일 기준으로 판단)"
     )
 
     st.divider()
@@ -40,16 +40,6 @@ def render() -> None:
 
     all_rows = [common.build_full_row(order, idx + 1, reveal=reveal) for idx, order in enumerate(orders)]
 
-    excel_rows = [common.build_full_row(order, idx + 1, reveal=True) for idx, order in enumerate(orders)]
-    excel_bytes = common.build_excel_bytes(excel_rows)
-    st.download_button(
-        "엑셀파일생성",
-        data=excel_bytes,
-        file_name="구매확정.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="purchase_confirmed_excel_download",
-    )
-
     filtered_pairs = [(order, row) for order, row in zip(orders, all_rows) if common.matches_search(row, keyword)]
 
     if not filtered_pairs:
@@ -59,9 +49,15 @@ def render() -> None:
     filtered_orders = [pair[0] for pair in filtered_pairs]
     filtered_rows = [pair[1] for pair in filtered_pairs]
 
+    # 샵마인식 액션 버튼 바. 구매확정은 확인/처리 주 버튼이 없습니다(유틸 버튼만).
+    common.render_shopmine_action_bar("purchase_confirmed", filtered_orders)
+
     # 행(셀) 클릭 → 오른쪽 상세. 표+상세를 fragment로 그려 스크롤이 위로 안 튐.
     common.render_full_table(
         filtered_rows, filtered_orders, key="purchase_confirmed",
         detail_renderer=lambda o: common.render_full_detail(o, reveal),
         multi_select=True,
     )
+
+    # 표 아래 합계 요약 바(총 건수·결제·수수료·정산) — 신규주문과 동일.
+    common.render_order_summary_bar(filtered_orders)

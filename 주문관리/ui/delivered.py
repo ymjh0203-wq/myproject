@@ -24,29 +24,17 @@ def render() -> None:
     st.header("배송완료")
 
     period_from, period_to = common.render_period_picker("delivered", "결제일시(시작)", "결제일시(종료)")
-    collect_clicked = st.button("수집하기", type="primary", width="stretch", key="delivered_collect")
-
-    if collect_clicked:
-        if period_from > period_to:
-            st.error("시작일이 종료일보다 늦을 수 없습니다.")
-        else:
-            # 배송완료만이 아니라 전 단계를 함께 최신화합니다.
-            result = common.collect_all_stages_with_progress(period_from, period_to)
-            if result["status"] == "fail":
-                st.error(f"주문 수집 실패: {result['error_message']}")
-            else:
-                closed = result.get("closed_count") or 0
-                message = (
-                    f"수집 완료 - 전체 단계 최신화 "
-                    f"(신규 {result['new_count']}건, 갱신 {result['updated_count']}건"
-                    + (f", 취소·반품 정리 {closed}건" if closed else "")
-                    + ")"
-                )
-                if result["error_message"]:
-                    st.warning(message + f"\n일부 오류: {result['error_message']}")
-                else:
-                    st.success(message)
-                st.rerun()
+    st.caption(
+        "※ 위 기간은 '수집하기'로 쿠팡에서 **가져올 범위**에만 적용됩니다. 아래 목록은 "
+        "현재 배송완료 상태인 주문을 **기간과 무관하게 전부** 보여줍니다."
+    )
+    # 수집은 백그라운드로 돌아, 도중에 다른 메뉴로 옮겨도 취소되지 않고 끝까지 진행됩니다.
+    # advance_confirmed=True: 주문 후 30일 넘은 배송완료 주문을 구매확정으로 자동 전진시켜,
+    # 배송완료 화면에 오래된 완료 주문이 계속 쌓이는 것을 막습니다.
+    common.render_background_collect(
+        period_from, period_to, key="delivered", stages=[models.WORK_STATUS_DELIVERED],
+        advance_confirmed=True,
+    )
 
     common.render_live_count_banner(models.WORK_STATUS_DELIVERED)
 
@@ -65,16 +53,6 @@ def render() -> None:
 
     all_rows = [common.build_full_row(order, idx + 1, reveal=reveal) for idx, order in enumerate(orders)]
 
-    excel_rows = [common.build_full_row(order, idx + 1, reveal=True) for idx, order in enumerate(orders)]
-    excel_bytes = common.build_excel_bytes(excel_rows)
-    st.download_button(
-        "엑셀파일생성",
-        data=excel_bytes,
-        file_name="배송완료.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="delivered_excel_download",
-    )
-
     filtered_pairs = [(order, row) for order, row in zip(orders, all_rows) if common.matches_search(row, keyword)]
 
     if not filtered_pairs:
@@ -84,9 +62,15 @@ def render() -> None:
     filtered_orders = [pair[0] for pair in filtered_pairs]
     filtered_rows = [pair[1] for pair in filtered_pairs]
 
+    # 샵마인식 액션 버튼 바. 배송완료는 확인/처리 주 버튼이 없습니다(유틸 버튼만).
+    common.render_shopmine_action_bar("delivered", filtered_orders)
+
     # 행(셀) 클릭 → 오른쪽 상세. 표+상세를 fragment로 그려 스크롤이 위로 안 튐.
     common.render_full_table(
         filtered_rows, filtered_orders, key="delivered",
         detail_renderer=lambda o: common.render_full_detail(o, reveal),
         multi_select=True,
     )
+
+    # 표 아래 합계 요약 바(총 건수·결제·수수료·정산) — 신규주문과 동일.
+    common.render_order_summary_bar(filtered_orders)

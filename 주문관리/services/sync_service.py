@@ -20,7 +20,7 @@
 
 import json
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import models
 from integrations.coupang_client import CoupangApiError, CoupangClient
@@ -54,6 +54,8 @@ LAST_SYNC_SETTING_KEY_PREFIX = "last_sync_at"
 LAST_FETCHED_COUNT_KEY_PREFIX = "last_fetched_count"
 
 # 각 내부 작업 단계가 쿠팡의 어느 원본 상태에 해당하는지 (2026-07-18 공식 문서로 확인).
+# 신규주문=결제완료(ACCEPT), 발송대기=상품준비중(INSTRUCT). '발송대기로 이동'을 누르면
+# 쿠팡에 상품준비중 처리를 요청해 ACCEPT→INSTRUCT로 넘어갑니다.
 # 배송중은 쿠팡에서 DEPARTURE(배송지시)와 DELIVERING(배송중) 두 상태 다 해당합니다.
 WORK_STATUS_TO_MARKET_STATUSES = {
     models.WORK_STATUS_NEW: ["ACCEPT"],
@@ -274,54 +276,210 @@ COLLECTABLE_ORDER_STAGES = [
 
 def reconcile_active_orders(period_from=None, period_to=None) -> dict:
     """
-    신규주문/발송대기인데 쿠팡 주문목록에서 사라진 주문(취소·반품 등)을 찾아
-    '주문종료' 상태로 옮겨, 신규주문·발송대기 화면에서 자동으로 빠지게 합니다.
+    신규주문/발송대기 주문을 쿠팡 '실제 상태'와 맞춥니다.
+      - 쿠팡에서 이미 다음 단계로 넘어간 주문(예: 발송돼서 배송지시=DEPARTURE) → 그 단계(배송중 등)로 '전진'
+      - 쿠팡 목록에서 아예 사라진 주문(취소·반품 등) → '주문종료'
 
-    동작:
-      1) 계정마다 쿠팡의 모든 주문상태(신규~배송완료)를 조회해, 지금 살아있는
-         주문(shipment_box) 집합을 만듭니다.
-      2) 우리 DB의 신규/발송대기 주문 중, 그 기간 안인데 이 집합에 없는 것은
-         쿠팡에서 사라진 것 → '주문종료'로 옮깁니다.
+    ⚠️ 넘겨받은 period_from/to는 무시하고, 실제 활성 주문들의 주문일 범위(최대 90일)로
+    조회합니다. 그래야 오래되어 수집 기간 밖에 있는 발송대기 주문도 빠짐없이 정리됩니다.
+    (예전엔 '사라진 것만 종료'했고 기간도 좁아서, 이미 발송된 주문이 발송대기에 계속 쌓였음)
 
-    안전장치: 어떤 계정의 조회가 실패(504 등)하면 그 계정은 건드리지 않습니다.
-    (조회 실패를 "사라졌다"로 오해해서 멀쩡한 주문을 지우는 일을 막습니다)
+    안전장치: 계정 조회가 실패(504 등)하면 그 계정은 건드리지 않습니다. 또 조회 범위
+    (최대 90일)보다 오래된 주문은 '사라졌다'로 오판하지 않도록 종료하지 않습니다.
     """
     accounts = market_repository.list_market_accounts(platform=market_repository.PLATFORM_COUPANG)
     if not accounts:
-        return {"status": "success", "closed_count": 0, "error_message": None}
+        return {"status": "success", "closed_count": 0, "advanced_count": 0, "error_message": None}
 
     all_statuses = ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"]
-    date_from = (period_from or (datetime.now().date())).isoformat()
-    date_to = (period_to or datetime.now().date()).isoformat()
     active_stages = [models.WORK_STATUS_NEW, models.WORK_STATUS_READY_TO_SHIP]
+    order_rank = {ws: i for i, ws in enumerate(models.WORK_STATUS_LIST)}
+
+    def _order_date(order):
+        try:
+            return date.fromisoformat((order.get("ordered_at") or "")[:10])
+        except (TypeError, ValueError):
+            return None
 
     total_closed = 0
+    total_advanced = 0
     errors = []
 
     for account in accounts:
+        active = order_repository.list_active_orders_for_account(account["id"], active_stages)
+        if not active:
+            continue
+
+        # 조회 기간 = 가장 오래된 활성 주문일 ~ 오늘 (최대 90일 전까지만). 활성 주문은 보통
+        # 최근이라 실제 조회량은 작습니다.
+        floor = date.today() - timedelta(days=90)
+        dates = [d for d in (_order_date(o) for o in active) if d]
+        fetch_from = max(min(dates) - timedelta(days=2), floor) if dates else floor
+        fetch_to = date.today()
+
         client = _client_for_account(account)
         try:
-            live_orders = _fetch_statuses_with_retry(client, all_statuses, period_from, period_to)
+            live_orders = _fetch_statuses_with_retry(client, all_statuses, fetch_from, fetch_to)
         except CoupangApiError as error:
             # 이 계정은 조회 실패 → 안전을 위해 건드리지 않습니다.
             errors.append(f"[{account['market_name']}] {error}")
             continue
 
-        live_boxes = {str(order["shipment_box_id"]) for order in live_orders}
-        candidates = order_repository.list_active_orders_for_reconcile(
-            account["id"], active_stages, date_from, date_to
-        )
-        for order in candidates:
-            if str(order["shipment_box_id"]) not in live_boxes:
-                order_repository.update_work_status(
-                    order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile"
-                )
-                total_closed += 1
+        status_by_box = {str(o["shipment_box_id"]): o.get("market_status") for o in live_orders}
+
+        for order in active:
+            box = str(order["shipment_box_id"])
+            current = order["work_status"]
+            if box in status_by_box:
+                # 쿠팡 실제 상태가 더 진행됐으면 그 단계로 전진(뒤로는 안 감).
+                target = models.map_market_status_to_work_status(status_by_box[box], current)
+                if order_rank.get(target, -1) > order_rank.get(current, -1):
+                    order_repository.update_work_status(order["id"], target, changed_by="auto-reconcile")
+                    total_advanced += 1
+            else:
+                # 쿠팡 목록에 없음: 조회 범위 안이면 취소·사라짐 → 종료.
+                # 조회 범위(90일)보다 오래된 주문은 오판 방지를 위해 건드리지 않습니다.
+                od = _order_date(order)
+                if od is None or od >= fetch_from:
+                    order_repository.update_work_status(order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile")
+                    total_closed += 1
 
     return {
         "status": "partial" if errors else "success",
         "closed_count": total_closed,
+        "advanced_count": total_advanced,
         "error_message": " / ".join(errors) if errors else None,
+    }
+
+
+def advance_delivered_orders(progress=None) -> dict:
+    """
+    배송중(work_status=배송중) 주문 중, 쿠팡에서 이미 배송완료(FINAL_DELIVERY)로
+    넘어간 건을 '배송완료' 단계로 전진시킵니다.
+
+    ⚠️ 배송중 화면의 '수집하기'는 DEPARTURE/DELIVERING(배송지시·배송중)만 조회하므로,
+    배송완료된 주문은 그 조회에 안 나와 영원히 배송중에 갇힙니다. 이 함수가 그 갇힌
+    주문을 정리합니다.
+
+    - 화면의 결제일시 필터와 무관하게, '배송중 주문들의 실제 주문일 범위(최대 120일)'로
+      조회하므로 오래되어 갇혀 있던 주문도 빠짐없이 정리됩니다.
+    - '전진'만 합니다(뒤로 되돌리거나 임의로 종료하지 않음). 그래서 실수로 데이터를
+      잃을 위험이 없습니다.
+    - 계정 조회가 실패(504 등)하면 그 계정은 건드리지 않습니다.
+
+    반환: {status, scanned, advanced_count, error_message}
+    """
+    accounts = market_repository.list_market_accounts(platform=market_repository.PLATFORM_COUPANG)
+    if not accounts:
+        return {"status": "success", "scanned": 0, "advanced_count": 0, "error_message": None}
+
+    order_rank = {ws: i for i, ws in enumerate(models.WORK_STATUS_LIST)}
+    delivered_rank = order_rank.get(models.WORK_STATUS_DELIVERED, -1)
+
+    def _order_date(order):
+        try:
+            return date.fromisoformat((order.get("ordered_at") or "")[:10])
+        except (TypeError, ValueError):
+            return None
+
+    total_scanned = 0
+    total_advanced = 0
+    errors = []
+
+    for acc_i, account in enumerate(accounts):
+        shipping = order_repository.list_active_orders_for_account(
+            account["id"], [models.WORK_STATUS_SHIPPING]
+        )
+        if not shipping:
+            continue
+        total_scanned += len(shipping)
+
+        # 조회 기간 = 가장 오래된 배송중 주문일 ~ 오늘 (최대 120일 전까지만).
+        floor = date.today() - timedelta(days=120)
+        dates = [d for d in (_order_date(o) for o in shipping) if d]
+        fetch_from = max(min(dates) - timedelta(days=2), floor) if dates else floor
+        fetch_to = date.today()
+
+        client = _client_for_account(account)
+        try:
+            delivered = _fetch_statuses_with_retry(client, ["FINAL_DELIVERY"], fetch_from, fetch_to)
+        except CoupangApiError as error:
+            # 이 계정은 조회 실패 → 안전을 위해 건드리지 않습니다.
+            errors.append(f"[{account['market_name']}] {error}")
+            continue
+
+        delivered_boxes = {str(o["shipment_box_id"]) for o in delivered}
+        for order in shipping:
+            if str(order["shipment_box_id"]) in delivered_boxes:
+                if delivered_rank > order_rank.get(order["work_status"], -1):
+                    order_repository.update_work_status(
+                        order["id"], models.WORK_STATUS_DELIVERED, changed_by="auto-advance"
+                    )
+                    total_advanced += 1
+
+        if progress:
+            try:
+                progress(acc_i + 1, len(accounts))
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {
+        "status": "partial" if errors else "success",
+        "scanned": total_scanned,
+        "advanced_count": total_advanced,
+        "error_message": " / ".join(errors) if errors else None,
+    }
+
+
+def advance_confirmed_orders(min_days_since_order: int = 30, dry_run: bool = False,
+                             progress=None) -> dict:
+    """
+    배송완료(work_status=배송완료) 주문 중, 주문일이 min_days_since_order일보다 오래된
+    건을 '구매확정' 단계로 전진시킵니다.
+
+    쿠팡은 배송완료 후 일정 기간이 지나면 구매확정으로 자동 처리됩니다. 다만 쿠팡
+    원본에 '배송완료 날짜'가 저장돼 있지 않아(주문일·결제일만 있음), '주문일'을 기준으로
+    판단합니다. 쿠팡은 보통 주문→배송완료가 1~2주라, 주문 후 30일이면 배송완료 후
+    대략 2주 이상 지난 셈입니다. (기준일은 필요하면 조절 가능)
+
+    - '전진'만 합니다(뒤로 되돌리거나 임의로 종료하지 않음).
+    - 쿠팡 API 호출 없이 로컬 DB만으로 즉시 처리됩니다.
+    - dry_run=True면 실제로 바꾸지 않고 '넘어갈 건수'만 세어 돌려줍니다(미리보기).
+
+    반환: {status, scanned, would_advance, advanced_count, cutoff, dry_run, error_message}
+    """
+    order_rank = {ws: i for i, ws in enumerate(models.WORK_STATUS_LIST)}
+    confirmed_rank = order_rank.get(models.WORK_STATUS_PURCHASE_CONFIRMED, -1)
+    cutoff = (date.today() - timedelta(days=min_days_since_order)).isoformat()
+
+    delivered = order_repository.list_orders_by_work_status(models.WORK_STATUS_DELIVERED)
+    scanned = len(delivered)
+
+    to_advance = [
+        o["id"] for o in delivered
+        if (od := (o.get("ordered_at") or "")[:10]) and od <= cutoff
+        and confirmed_rank > order_rank.get(o["work_status"], -1)
+    ]
+
+    if not dry_run:
+        for i, order_id in enumerate(to_advance):
+            order_repository.update_work_status(
+                order_id, models.WORK_STATUS_PURCHASE_CONFIRMED, changed_by="auto-confirm"
+            )
+            if progress:
+                try:
+                    progress(i + 1, len(to_advance))
+                except Exception:  # noqa: BLE001
+                    pass
+
+    return {
+        "status": "success",
+        "scanned": scanned,
+        "would_advance": len(to_advance),
+        "advanced_count": 0 if dry_run else len(to_advance),
+        "cutoff": cutoff,
+        "dry_run": dry_run,
+        "error_message": None,
     }
 
 
@@ -383,6 +541,33 @@ _STAGE_MARKET_MAP = [
 def coupang_accounts() -> list:
     """등록된 쿠팡 계정 목록."""
     return market_repository.list_market_accounts(platform=market_repository.PLATFORM_COUPANG)
+
+
+def sync_settlement_amounts(period_from, period_to) -> dict:
+    """
+    쿠팡 매출내역(정산) 조회로 각 계정의 '주문별 실제 정산금액'을 가져와 DB에 반영합니다.
+    매출인식일(구매확정 또는 배송완료 3일 후) 기준이라, 배송완료·구매확정된 주문에만 값이 옵니다.
+    반환: {"status", "fetched": 조회된 주문 수, "updated": DB 반영 행 수, "error_message"}
+    """
+    mapping = {}
+    errors = []
+    for account in coupang_accounts():
+        client = _client_for_account(account)
+        try:
+            data = client.fetch_revenue_history(period_from, period_to)
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"[{account.get('market_name')}] {error}")
+            continue
+        for market_order_id, info in data.items():
+            mapping[market_order_id] = info.get("settlement_amount")
+
+    updated = order_repository.bulk_update_settlement_amount(mapping)
+    return {
+        "status": "fail" if (errors and not mapping) else "success",
+        "fetched": len(mapping),
+        "updated": updated,
+        "error_message": " / ".join(errors[:4]) if errors else None,
+    }
 
 
 def sync_and_reconcile_account(account: dict, period_from=None, period_to=None) -> dict:
@@ -460,14 +645,64 @@ def get_last_fetched_count(work_status: str) -> int | None:
     return int(value) if value is not None else None
 
 
+def _recover_already_advanced_orders(client, pending_orders: list) -> tuple:
+    """
+    acknowledge(결제완료→상품준비중)가 거부된 주문들을 구제합니다.
+
+    ⚠️ 쿠팡은 새 주문을 자동으로 '상품준비중(INSTRUCT)'으로 넘기는 경우가 많은데,
+    그러면 우리가 주문확인(acknowledge)을 눌러도 "배송상태를 변경할 수 없습니다"로
+    거부됩니다. 이 주문은 이미 목적 상태(상품준비중=발송대기 이상)라 사실상 성공입니다.
+    그래서 쿠팡 실제 상태를 확인해, 이미 상품준비중 이상이면 알맞은 단계로 옮기고
+    성공으로 셉니다. 여전히 결제완료(또는 조회 안 됨)면 진짜 실패로 남깁니다.
+
+    돌려주는 값: (구제한 건수, 여전히 실패한 주문 목록)
+    """
+    if not pending_orders:
+        return 0, []
+
+    # 조회 기간: 대기 주문들의 결제일 중 가장 이른 날 ~ 오늘 (없으면 최근 14일)
+    paid_dates = []
+    for o in pending_orders:
+        try:
+            paid_dates.append(date.fromisoformat((o.get("paid_at") or o.get("ordered_at") or "")[:10]))
+        except (TypeError, ValueError):
+            pass
+    period_from = (min(paid_dates) - timedelta(days=1)) if paid_dates else (date.today() - timedelta(days=14))
+    period_to = date.today()
+
+    try:
+        live = _fetch_statuses_with_retry(
+            client, ["INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"], period_from, period_to
+        )
+        live_by_id = {o["market_order_id"]: o for o in live}
+    except CoupangApiError:
+        live_by_id = {}
+
+    recovered = 0
+    still_failed = []
+    for order in pending_orders:
+        found = live_by_id.get(order["market_order_id"])
+        if found:
+            # 이미 상품준비중 이상 → 실제 상태에 맞는 단계로 갱신(성공 처리).
+            target = models.map_market_status_to_work_status(
+                found.get("market_status"), models.WORK_STATUS_READY_TO_SHIP
+            )
+            _save_one_order(found, target, order.get("market_account_id"))
+            recovered += 1
+        else:
+            still_failed.append(order)
+    return recovered, still_failed
+
+
 def move_orders_to_ready_to_ship(orders: list) -> dict:
     """
-    선택한 주문들을 실제로 쿠팡에 "상품준비중" 처리를 요청하고, 성공한 주문만
-    우리 프로그램에서도 발송대기로 이동시킵니다. (쿠팡 쪽 상태와 우리 앱의
-    상태가 서로 다르게 남지 않도록, 실제 쿠팡 처리가 성공한 것만 넘깁니다)
+    선택한 주문들을 발송대기로 넘깁니다. 먼저 쿠팡에 "상품준비중" 처리(acknowledge)를
+    요청하고, 성공한 주문을 발송대기로 이동합니다.
 
-    선택한 주문들이 여러 상점(계정) 것이어도, 계정별로 나눠서 각자의
-    인증정보로 요청합니다.
+    ⚠️ 쿠팡이 새 주문을 이미 자동으로 '상품준비중'으로 넘겨버린 경우 acknowledge가
+    "배송상태를 변경할 수 없습니다"로 거부되는데, 이런 주문은 사실 이미 발송대기
+    상태이므로 실제 상태를 확인해 조용히 발송대기(이상)로 이동시킵니다. 그래도
+    안 되는(진짜 문제) 주문만 실패로 돌려줍니다.
 
     Mock 모드에서는 실제 쿠팡 요청 없이 전부 성공한 것으로 처리합니다.
 
@@ -484,24 +719,39 @@ def move_orders_to_ready_to_ship(orders: list) -> dict:
         client = _client_for_order(account_orders[0])
         shipment_box_ids = [order["shipment_box_id"] for order in account_orders]
 
+        pending = []          # acknowledge 실패/누락 → 실제 상태 확인 대상
+        pending_message = {}  # order id -> 원래 실패 사유(진짜 실패일 때 보여줄 메시지)
+
         try:
             results = client.acknowledge_orders(shipment_box_ids)
         except CoupangApiError as error:
-            failed.extend(
-                {"market_order_id": order["market_order_id"], "message": str(error)} for order in account_orders
-            )
-            continue
+            # API 호출 자체가 실패 → 전부 실제 상태 확인으로 넘김
+            results = None
+            for order in account_orders:
+                pending.append(order)
+                pending_message[order["id"]] = str(error)
 
-        result_by_shipment_box = {r["shipment_box_id"]: r for r in results}
+        if results is not None:
+            result_by_shipment_box = {r["shipment_box_id"]: r for r in results}
+            for order in account_orders:
+                result = result_by_shipment_box.get(order["shipment_box_id"])
+                if result and result["succeeded"]:
+                    order_repository.update_work_status(order["id"], models.WORK_STATUS_READY_TO_SHIP, changed_by="manual")
+                    moved_count += 1
+                else:
+                    pending.append(order)
+                    pending_message[order["id"]] = (
+                        result["message"] if result else "쿠팡 응답에서 이 주문의 처리 결과를 찾을 수 없습니다."
+                    )
 
-        for order in account_orders:
-            result = result_by_shipment_box.get(order["shipment_box_id"])
-            if result and result["succeeded"]:
-                order_repository.update_work_status(order["id"], models.WORK_STATUS_READY_TO_SHIP, changed_by="manual")
-                moved_count += 1
-            else:
-                message = result["message"] if result else "쿠팡 응답에서 이 주문의 처리 결과를 찾을 수 없습니다."
-                failed.append({"market_order_id": order["market_order_id"], "message": message})
+        # acknowledge 거부/실패 주문 중 '이미 상품준비중 이상'인 것은 구제(성공 처리).
+        recovered, still_failed = _recover_already_advanced_orders(client, pending)
+        moved_count += recovered
+        for order in still_failed:
+            failed.append({
+                "market_order_id": order["market_order_id"],
+                "message": pending_message.get(order["id"], "쿠팡 처리에 실패했습니다."),
+            })
 
     return {"moved_count": moved_count, "failed": failed}
 
@@ -519,6 +769,21 @@ def register_invoice_and_move_to_shipping(
 
     try:
         result = client.register_invoice(order, delivery_company_code, invoice_number, estimated_shipping_date)
+    except CoupangApiError as error:
+        return {"succeeded": False, "message": str(error)}
+
+    if result["succeeded"]:
+        order_repository.update_shipping_invoice(order["id"], delivery_company_code, invoice_number)
+
+    return result
+
+
+def update_invoice_for_shipping(order: dict, delivery_company_code: str, invoice_number: str) -> dict:
+    """이미 배송중인 주문의 송장(택배사+운송장번호)을 쿠팡에서 수정하고, 성공하면 우리 DB도 갱신합니다.
+    돌려주는 값: {"succeeded": bool, "message": str}"""
+    client = _client_for_order(order)
+    try:
+        result = client.update_invoice(order, delivery_company_code, invoice_number)
     except CoupangApiError as error:
         return {"succeeded": False, "message": str(error)}
 
