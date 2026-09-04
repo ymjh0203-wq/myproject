@@ -48,7 +48,7 @@
 import copy
 import hashlib
 import hmac
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import requests
@@ -102,6 +102,11 @@ CALL_CENTER_INQUIRIES_PATH_TEMPLATE = "/v2/providers/openapi/apis/api/v5/vendors
 # 상품조회: 판매자상품코드(sellerProductId)로 상품 상세를 가져옵니다. 응답에 상품
 # 페이지 링크를 만드는 데 필요한 productId(노출상품ID)와 옵션별 itemId가 들어있습니다.
 SELLER_PRODUCT_PATH_TEMPLATE = "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/{seller_product_id}"
+
+# 매출내역(정산) 조회 — 주문별 실제 판매금액·수수료·정산금액을 매출인식일(구매확정/배송완료+3일)
+# 기준으로 돌려줍니다. vendorId는 쿼리 파라미터(경로에 vendors/{id} 없음). 기간 최대 31일.
+# 출처: 쿠팡 개발자센터 "매출내역 조회(Sales Detail Query)" (2026-08 확인)
+REVENUE_HISTORY_PATH = "/v2/providers/openapi/apis/api/v1/revenue-history"
 
 
 def _order_within_period(ordered_at: str, period_from, period_to) -> bool:
@@ -395,6 +400,64 @@ class CoupangClient:
             return {"succeeded": True, "message": "(Mock) 송장이 등록되었습니다."}
         return self._register_invoice_real(order, delivery_company_code, invoice_number, estimated_shipping_date)
 
+    def update_invoice(self, order: dict, delivery_company_code: str, invoice_number: str) -> dict:
+        """이미 발송된(배송중) 주문의 송장을 '수정'합니다. (송장업데이트 API)
+        돌려주는 값: {"succeeded": bool, "message": str}"""
+        if self.mode == "mock":
+            return {"succeeded": True, "message": "(Mock) 송장이 수정되었습니다."}
+        return self._update_invoice_real(order, delivery_company_code, invoice_number)
+
+    def _update_invoice_real(self, order: dict, delivery_company_code: str, invoice_number: str) -> dict:
+        """쿠팡 오픈API 송장업데이트: PUT .../orders/invoices (등록과 같은 엔드포인트·본문, 메서드만 PUT).
+        배송지시/배송중 상태 주문의 택배사·운송장번호를 바꿉니다."""
+        self._check_credentials()
+        path = INVOICE_PATH_TEMPLATE.format(vendor_id=self.vendor_id)
+        apply_dtos = [
+            {
+                "shipmentBoxId": int(order["shipment_box_id"]),
+                "orderId": int(order["market_order_id"]),
+                "deliveryCompanyCode": delivery_company_code,
+                "invoiceNumber": invoice_number,
+                "vendorItemId": int(item["market_item_id"]),
+                "splitShipping": False,
+                "preSplitShipped": False,
+            }
+            for item in order["items"]
+        ]
+        body = {"vendorId": self.vendor_id, "orderSheetInvoiceApplyDtos": apply_dtos}
+        response = self._request("PUT", path, params={}, json_body=body)
+        data = response.get("data") or {}
+        response_list = data.get("responseList") or []
+        failed = [
+            it.get("resultMessage") for it in response_list
+            if not it.get("succeed") and it.get("resultMessage")
+        ]
+        if failed or not response_list:
+            message = " / ".join(failed) if failed else (data.get("responseMessage") or "처리 결과를 확인할 수 없습니다.")
+            return {"succeeded": False, "message": message}
+        return {"succeeded": True, "message": "송장이 수정되었습니다."}
+
+    def approve_return_request(self, receipt_id, cancel_count: int) -> dict:
+        """반품/취소(출고중지 포함) 요청을 승인 처리합니다. (쿠팡 '반품요청 승인 처리')
+        돌려주는 값: {"succeeded": bool, "message": str}"""
+        if self.mode == "mock":
+            return {"succeeded": True, "message": "(Mock) 취소가 승인되었습니다."}
+        self._check_credentials()
+        # ★반품요청 승인처리 = v4 엔드포인트(목록조회는 v6이지만 승인은 v4), 필드는 cancelCount.
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/returnRequests/{int(receipt_id)}/approval"
+        body = {
+            "vendorId": self.vendor_id,
+            "receiptId": int(receipt_id),
+            "cancelCount": int(cancel_count),
+        }
+        # _request는 4xx/응답코드>=400이면 예외를 던지므로, 여기까지 오면 성공(200)입니다.
+        resp = self._request("PATCH", path, params={}, json_body=body)
+        data = resp.get("data") if isinstance(resp, dict) else None
+        # 일부 응답은 data 안에 개별 결과/실패 메시지를 담습니다.
+        if isinstance(data, dict) and data.get("resultCode") and str(data.get("resultCode")).upper() not in ("SUCCESS", "200"):
+            return {"succeeded": False, "message": data.get("resultMessage") or "승인 처리 실패"}
+        return {"succeeded": True, "message": "취소(출고중지) 승인이 완료되었습니다."}
+
     def fetch_claims(self, claim_type: str, period_from=None, period_to=None) -> list:
         """
         취소요청(claim_type='CANCEL') 또는 반품요청(claim_type='RETURN')을 가져옵니다.
@@ -463,6 +526,63 @@ class CoupangClient:
                 )
         return {"product_id": str(product_id), "items": items}
 
+    def fetch_revenue_history(self, recognition_from, recognition_to) -> dict:
+        """
+        쿠팡 매출내역(정산) 조회. 매출인식일(구매확정 또는 배송완료 3일 후)이 기간 안인
+        주문들의 '실제 정산금액'을 돌려줍니다. 기간은 최대 31일이라 31일씩 나눠서 조회하고,
+        페이지(token)도 끝까지 따라갑니다. 종료일은 '어제 이하'여야 해서 자동으로 맞춥니다.
+
+        돌려주는 형식: { market_order_id(str): {
+            "settlement_amount": 정산금액합(int),  # 판매금액 − 수수료 − VAT (SALE−REFUND 합산)
+            "service_fee": 수수료합(int),
+            "settlement_date": '정산예정일(YYYY-MM-DD)' 또는 '',
+        } }
+        (Mock 모드거나 인증정보 없으면 빈 dict)
+        """
+        if self.mode == "mock":
+            return {}
+        self._check_credentials()
+
+        yesterday = date.today() - timedelta(days=1)
+        start = recognition_from if isinstance(recognition_from, date) else date.fromisoformat(str(recognition_from)[:10])
+        end = recognition_to if isinstance(recognition_to, date) else date.fromisoformat(str(recognition_to)[:10])
+        if end > yesterday:
+            end = yesterday
+        if start > end:
+            return {}
+
+        result: dict = {}
+        window_start = start
+        while window_start <= end:
+            window_end = min(window_start + timedelta(days=30), end)  # 최대 31일(양끝 포함)
+            token = ""
+            while True:
+                params = {
+                    "vendorId": self.vendor_id,
+                    "recognitionDateFrom": window_start.isoformat(),
+                    "recognitionDateTo": window_end.isoformat(),
+                    "token": token,
+                    "maxPerPage": 50,
+                }
+                body = self._request("GET", REVENUE_HISTORY_PATH, params)
+                for order in body.get("data") or []:
+                    oid = str(order.get("orderId") or "")
+                    if not oid:
+                        continue
+                    settle = sum(self._money_to_won(it.get("settlementAmount")) for it in (order.get("items") or []))
+                    fee = sum(self._money_to_won(it.get("serviceFee")) + self._money_to_won(it.get("serviceFeeVat"))
+                              for it in (order.get("items") or []))
+                    entry = result.setdefault(oid, {"settlement_amount": 0, "service_fee": 0, "settlement_date": ""})
+                    entry["settlement_amount"] += settle
+                    entry["service_fee"] += fee
+                    entry["settlement_date"] = order.get("settlementDate") or entry["settlement_date"]
+                if body.get("hasNext") and body.get("nextToken"):
+                    token = body["nextToken"]
+                else:
+                    break
+            window_start = window_end + timedelta(days=1)
+        return result
+
     # ------------------------------------------------------
     # 아래는 실제 쿠팡 API 연동 부분입니다.
     # (2026-07-18) 공식 문서(developers.coupang.com)에서 확인한 내용으로
@@ -504,6 +624,27 @@ class CoupangClient:
             )
 
     def _request(self, method: str, path: str, params: dict, json_body: dict = None) -> dict:
+        """쿠팡 API 요청을 보내되, 일시적 오류(504·타임아웃·429·5xx)는 몇 번 재시도합니다.
+
+        ★왜: 예전에는 재시도 없이 한 번만 시도해서, 쿠팡이 일시적으로 504를 주면 그 계정
+        수집이 통째로 건너뛰어졌습니다. 그러면 '수집하기'를 눌러도 일부 상점 데이터가
+        누락돼(진행중 반품이 실제보다 많게 보이는 등) '실시간과 집계가 안 맞는' 원인이
+        됐습니다. retryable=True인 오류만 재시도하고, 인증실패·400 같은 영구오류는 즉시
+        올립니다."""
+        import time
+
+        last_error = None
+        for attempt in range(4):  # 최초 1회 + 재시도 3회
+            try:
+                return self._request_once(method, path, params, json_body)
+            except CoupangApiError as error:
+                last_error = error
+                if not error.retryable or attempt == 3:
+                    raise
+                time.sleep(1.5 * (attempt + 1))  # 1.5s → 3s → 4.5s 백오프
+        raise last_error  # (도달하지 않음)
+
+    def _request_once(self, method: str, path: str, params: dict, json_body: dict = None) -> dict:
         """실제 쿠팡 API에 요청 하나를 보내고 응답 JSON을 돌려줍니다."""
         # 서명에 쓴 쿼리스트링과 실제로 전송되는 쿼리스트링이 글자 하나까지 똑같아야
         # 서명이 일치합니다. requests의 params=를 쓰면 인코딩 방식이 서명 계산과
@@ -767,6 +908,9 @@ class CoupangClient:
             "receipt_id": str(raw.get("receiptId") or ""),
             "market_order_id": str(raw.get("orderId") or ""),
             "receipt_status": raw.get("receiptStatus") or "",
+            # 출고중지 처리상태: '미처리'면 아직 출고중지 요청이 진행 중(판매자 액션 필요).
+            # receiptStatus가 완료여도 이 값이 미처리면 Wing 출고중지관리엔 요청으로 남음.
+            "release_stop_status": raw.get("releaseStopStatus") or "",
             "reason_category1": raw.get("cancelReasonCategory1") or "",
             "reason_category2": raw.get("cancelReasonCategory2") or "",
             "reason_detail": raw.get("cancelReason") or "",
@@ -783,33 +927,47 @@ class CoupangClient:
         - cancelType=CANCEL(취소) 또는 RETURN(반품, 기본값)
         """
         self._check_credentials()
-        date_from = (period_from or (datetime.now() - timedelta(days=1)).date()).strftime("%Y-%m-%d")
-        date_to = (period_to or datetime.now().date()).strftime("%Y-%m-%d")
+        date_from = period_from or (datetime.now() - timedelta(days=1)).date()
+        date_to = period_to or datetime.now().date()
         path = RETURN_REQUESTS_PATH_TEMPLATE.format(vendor_id=self.vendor_id)
 
+        # 쿠팡 취소/반품 조회는 검색기간이 최대 31일까지만 허용됩니다
+        # (오류: "검색기간은 최대 31일입니다. SearchPeriod=92"). 요청 기간이 길면
+        # 나눠서 호출한 뒤 합칩니다.
+        # ★청크 크기 7일: 반품이 많은 계정은 넓은 기간(예: 30일)을 한 번에 조회하면
+        #   쿠팡이 504(게이트웨이 타임아웃)를 냅니다. 실측 결과 7일 단위로 쪼개니
+        #   무거운 계정도 13/13 청크 전부 안정적으로 조회됐습니다(교환요청과 동일한 방식).
         all_claims = []
-        next_token = ""
-        while True:
-            params = {
-                # 실제 호출 결과 확인(2026-07-21): searchType=timeFrame을 지정해야
-                # 기간(주문번호 없이) 검색이 되고, 이때는 yyyy-MM-ddTHH:mm 형식이 필요함
-                # (searchType 없이 보내면 "OrderId can't be null" 오류가 남)
-                "searchType": "timeFrame",
-                "createdAtFrom": f"{date_from}T00:00",
-                "createdAtTo": f"{date_to}T23:59",
-                "cancelType": claim_type,
-                "maxPerPage": 50,
-            }
-            if next_token:
-                params["nextToken"] = next_token
+        chunk_start = date_from
+        while chunk_start <= date_to:
+            chunk_end = min(chunk_start + timedelta(days=6), date_to)
+            c_from = chunk_start.strftime("%Y-%m-%d")
+            c_to = chunk_end.strftime("%Y-%m-%d")
 
-            body = self._request("GET", path, params)
-            raw_items = body.get("data") or []
-            all_claims.extend(self._convert_real_claim(raw, claim_type) for raw in raw_items)
+            next_token = ""
+            while True:
+                params = {
+                    # 실제 호출 결과 확인(2026-07-21): searchType=timeFrame을 지정해야
+                    # 기간(주문번호 없이) 검색이 되고, 이때는 yyyy-MM-ddTHH:mm 형식이 필요함
+                    # (searchType 없이 보내면 "OrderId can't be null" 오류가 남)
+                    "searchType": "timeFrame",
+                    "createdAtFrom": f"{c_from}T00:00",
+                    "createdAtTo": f"{c_to}T23:59",
+                    "cancelType": claim_type,
+                    "maxPerPage": 50,
+                }
+                if next_token:
+                    params["nextToken"] = next_token
 
-            next_token = body.get("nextToken") or ""
-            if not next_token or not raw_items:
-                break
+                body = self._request("GET", path, params)
+                raw_items = body.get("data") or []
+                all_claims.extend(self._convert_real_claim(raw, claim_type) for raw in raw_items)
+
+                next_token = body.get("nextToken") or ""
+                if not next_token or not raw_items:
+                    break
+
+            chunk_start = chunk_end + timedelta(days=1)
 
         return all_claims
 

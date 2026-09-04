@@ -2197,10 +2197,22 @@ CLAIM_STATUS_LABELS = {
 # '완료(종결)'된 것으로 보고, '접수 건만 보기'에서 숨길 상태값.
 CLAIM_COMPLETED_STATUSES = {"RETURNS_COMPLETED"}
 
+# 쿠팡 출고중지 처리상태(releaseStopStatus) 중 '아직 처리 안 됨(판매자 액션 필요)' 값.
+# ★중요: 쿠팡은 이런 건의 receiptStatus를 즉시 'RETURNS_COMPLETED'(완료)로 내려주지만,
+#   releaseStopStatus는 '미처리'로 남습니다. Wing '출고중지관리'는 이 값으로 집계하므로,
+#   우리도 이 값이 '미처리'면 '진행 중(출고중지요청)'으로 취급해야 집계가 맞습니다.
+RELEASE_STOP_PENDING = "미처리"
+
+
+def _is_release_stop_pending(claim: dict) -> bool:
+    """아직 처리 안 된 출고중지요청(판매자가 출고중지완료/이미출고 처리해야 하는 건)."""
+    return (claim.get("release_stop_status") or "") == RELEASE_STOP_PENDING
+
 
 def _is_release_stop(claim: dict) -> bool:
-    """'출고중지요청'(RELEASE_STOP_*) 여부. 이건 사실상 '취소'라서 반품이 아니라 취소로 분류합니다."""
-    return (claim.get("receipt_status") or "").startswith("RELEASE_STOP")
+    """'출고중지요청'(사실상 '취소') 여부 → 반품이 아니라 취소로 분류합니다.
+    미처리 출고중지(releaseStopStatus=미처리) 또는 옛 RELEASE_STOP_* 상태를 포함합니다."""
+    return _is_release_stop_pending(claim) or (claim.get("receipt_status") or "").startswith("RELEASE_STOP")
 
 
 def _claim_done_date(claim):
@@ -2282,7 +2294,7 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
     ]
     pending_claims = [
         c for c in claims
-        if (c.get("receipt_status") or "") not in CLAIM_COMPLETED_STATUSES
+        if ((c.get("receipt_status") or "") not in CLAIM_COMPLETED_STATUSES or _is_release_stop_pending(c))
         and (_d := _req_date(c)) is not None and period_from <= _d <= _upper
     ]
     last_sync_at = claims_sync_service.get_last_sync_at(settings_key)
@@ -2307,27 +2319,48 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
         return
 
     # 🛑 출고중지요청(취소) 바로 승인 — 취소주문 화면에서만.
+    # 버튼 바로 옆 드롭다운에서 '선택한 것만' 한 번에 승인합니다(기본 전체선택).
     if claim_type == "CANCEL":
         stop_items = [c for c in pending_claims if _is_release_stop(c)]
         if stop_items:
-            st.markdown("##### 🛑 출고중지요청 — 바로 취소 승인")
-            st.caption("아래 출고중지 요청을 누르면 쿠팡에서 **실제로 취소 승인** 처리됩니다.")
-            for c in stop_items:
-                _ac1, _ac2 = st.columns([3, 1])
-                with _ac1:
-                    st.write(
-                        f"접수 {c['receipt_id']} · 주문 {c.get('market_order_id')} · "
-                        f"{c.get('reason_category1') or '-'} · {(c.get('requested_at') or '')[:10]}"
-                    )
-                with _ac2:
-                    if st.button("✅ 취소 승인", key=f"approve_stop_{c['receipt_id']}", type="primary", width="stretch"):
-                        with st.spinner("쿠팡에 취소 승인 처리 중..."):
-                            res = claims_sync_service.approve_cancel_claim(c)
-                        if res["succeeded"]:
-                            st.success(f"취소 승인 완료 (접수 {c['receipt_id']})")
-                            st.rerun()
+            by_receipt = {str(c["receipt_id"]): c for c in stop_items}
+
+            def _fmt_stop(rid):
+                c = by_receipt[rid]
+                return (f"접수 {rid} · 주문 {c.get('market_order_id')} · "
+                        f"{c.get('reason_category1') or '-'} · {(c.get('requested_at') or '')[:10]}")
+
+            st.markdown(f"##### 🛑 출고중지요청 — 선택 취소 승인 (진행 중 {len(stop_items)}건)")
+            st.caption(
+                "승인할 출고중지요청을 고른 뒤 버튼을 누르면, **선택한 건만** 쿠팡에서 "
+                "**실제로 취소 승인** 처리됩니다. (기본은 전체 선택, 빼고 싶은 건 X로 제거)"
+            )
+            picked = st.multiselect(
+                "취소 승인할 출고중지요청",
+                options=list(by_receipt.keys()),
+                default=list(by_receipt.keys()),
+                format_func=_fmt_stop,
+                key=f"{claim_type}_stop_pick",
+            )
+            if st.button(
+                f"✅ 선택한 {len(picked)}건 취소 승인",
+                type="primary", disabled=not picked, key=f"{claim_type}_approve_selected",
+            ):
+                ok = 0
+                fails = []
+                with st.spinner(f"쿠팡에 취소 승인 처리 중... ({len(picked)}건)"):
+                    for rid in picked:
+                        res = claims_sync_service.approve_cancel_claim(by_receipt[rid])
+                        if res.get("succeeded"):
+                            ok += 1
                         else:
-                            st.error(f"취소 승인 실패: {res['message']}")
+                            fails.append(f"접수 {rid}: {res.get('message')}")
+                if ok:
+                    st.success(f"{ok}건 취소 승인 완료")
+                if fails:
+                    st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails))
+                if ok and not fails:
+                    st.rerun()
             st.divider()
 
     _c_search, _c_filter = st.columns([3, 1])
@@ -2375,7 +2408,11 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             "접수번호": c["receipt_id"],
             "주문번호": c["market_order_id"] or "-",
             "상점": c.get("market_account_name") or "-",
-            "처리상태": CLAIM_STATUS_LABELS.get(c["receipt_status"], c["receipt_status"] or "-"),
+            "처리상태": (
+                "출고중지요청(미처리)" if _is_release_stop_pending(c)
+                else CLAIM_STATUS_LABELS.get(c["receipt_status"], c["receipt_status"] or "-")
+            ),
+            "출고중지": c.get("release_stop_status") or "-",
             "사유": c["reason_category1"] or "-",
             "상세사유분류": c["reason_category2"] or "-",
             "상세사유": c["reason_detail"] or "-",

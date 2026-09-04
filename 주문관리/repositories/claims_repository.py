@@ -38,6 +38,7 @@ def insert_claim(
     complete_confirm_date: str,
     raw_response_json: str,
     market_account_id: int = None,
+    release_stop_status: str = "",
 ) -> int:
     now = _now()
     connection = get_connection()
@@ -46,15 +47,15 @@ def insert_claim(
             """
             INSERT INTO claims (
                 market_name, market_account_id, claim_type, receipt_id, market_order_id,
-                receipt_status, reason_category1, reason_category2, reason_detail,
+                receipt_status, release_stop_status, reason_category1, reason_category2, reason_detail,
                 requested_at, complete_confirm_type, complete_confirm_date,
                 raw_response_json, first_collected_at, last_updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id
             """,
             (
                 market_name, market_account_id, claim_type, receipt_id, market_order_id,
-                receipt_status, reason_category1, reason_category2, reason_detail,
+                receipt_status, release_stop_status, reason_category1, reason_category2, reason_detail,
                 requested_at, complete_confirm_type, complete_confirm_date,
                 raw_response_json, now, now,
             ),
@@ -75,6 +76,7 @@ def update_claim(
     complete_confirm_type: str,
     complete_confirm_date: str,
     raw_response_json: str,
+    release_stop_status: str = None,
 ) -> None:
     connection = get_connection()
     try:
@@ -83,16 +85,82 @@ def update_claim(
             UPDATE claims
             SET receipt_status = ?, reason_category1 = ?, reason_category2 = ?, reason_detail = ?,
                 complete_confirm_type = ?, complete_confirm_date = ?, raw_response_json = ?,
+                release_stop_status = COALESCE(?, release_stop_status),
                 last_updated_at = ?
             WHERE id = ?
             """,
             (
                 receipt_status, reason_category1, reason_category2, reason_detail,
                 complete_confirm_type, complete_confirm_date, raw_response_json,
+                release_stop_status,
                 _now(), claim_id,
             ),
         )
         connection.commit()
+    finally:
+        connection.close()
+
+
+# 쿠팡 반품/취소 목록에서 사라진(=더 이상 활성 아님) 건을 정리할 때 쓰는 상태.
+# 화면의 CLAIM_COMPLETED_STATUSES(완료)와 같은 값이라, 정리되면 '현재 접수(진행 중)'에서 빠집니다.
+_RESOLVED_STATUS = "RETURNS_COMPLETED"
+
+
+def reconcile_absent_pending(
+    claim_type: str, market_account_id, period_from, period_to, seen_receipt_ids, completed_statuses,
+) -> int:
+    """★정합성 보정: 특정 계정+종류에서 'DB엔 진행 중인데 이번 쿠팡 조회 결과엔 없는' 접수를
+    완료(목록에서 사라짐)로 정리하고, 정리한 건수를 돌려줍니다.
+
+    쿠팡 반품/취소 목록 조회는 완료건까지 함께 내려주므로, '완전히 성공한' 조회 결과에
+    어떤 접수가 없다면 그건 더 이상 활성 반품/취소가 아니라는 뜻입니다(고객 철회 등).
+    수집은 '쿠팡이 돌려준 건'만 갱신하기 때문에, 이렇게 사라진 건은 이 보정이 없으면
+    영원히 '진행 중'으로 남아 실제(쿠팡)와 집계가 안 맞습니다.
+
+    ★안전장치: 반드시 '조회가 완전히 성공한(오류 없는) 계정'에만 호출해야 합니다.
+      (조회가 일부 실패하면 활성 건을 잘못 완료처리할 수 있으므로) 또한 접수일이 조회
+      기간 안인 건만 대상으로 합니다.
+    """
+    seen = {str(x) for x in (seen_receipt_ids or [])}
+    pf = period_from.isoformat() if hasattr(period_from, "isoformat") else str(period_from)
+    pt = period_to.isoformat() if hasattr(period_to, "isoformat") else str(period_to)
+    completed = tuple(completed_statuses) or (_RESOLVED_STATUS,)
+
+    connection = get_connection()
+    try:
+        placeholders = ",".join("?" for _ in completed)
+        rows = connection.execute(
+            f"""
+            SELECT id, receipt_id, requested_at, complete_confirm_type
+            FROM claims
+            WHERE claim_type = ? AND market_account_id = ?
+              AND receipt_status NOT IN ({placeholders})
+            """,
+            (claim_type, market_account_id, *completed),
+        ).fetchall()
+
+        to_fix = []
+        for row in rows:
+            rid = str(row["receipt_id"])
+            if rid in seen:
+                continue  # 이번 조회에 나온 건(활성) → 건드리지 않음
+            req_date = (row["requested_at"] or "")[:10]
+            if not (pf <= req_date <= pt):
+                continue  # 조회 기간 밖의 건은 대상 아님(안전)
+            to_fix.append(row["id"])
+
+        for claim_id in to_fix:
+            connection.execute(
+                """
+                UPDATE claims
+                SET receipt_status = ?, complete_confirm_type = ?, complete_confirm_date = ?,
+                    last_updated_at = ?
+                WHERE id = ?
+                """,
+                (_RESOLVED_STATUS, "NOT_IN_COUPANG_LIST", _now(), _now(), claim_id),
+            )
+        connection.commit()
+        return len(to_fix)
     finally:
         connection.close()
 

@@ -76,6 +76,7 @@ def sync_claims(claim_type: str, period_from=None, period_to=None) -> dict:
     total_updated = 0
     errors = []
 
+    total_reconciled = 0
     for account in accounts:
         client = _client_for_account(account)
         try:
@@ -92,6 +93,7 @@ def sync_claims(claim_type: str, period_from=None, period_to=None) -> dict:
                 claims_repository.update_claim(
                     existing["id"], raw["receipt_status"], raw["reason_category1"], raw["reason_category2"],
                     raw["reason_detail"], raw["complete_confirm_type"], raw["complete_confirm_date"], raw_json,
+                    release_stop_status=raw.get("release_stop_status") or "",
                 )
                 total_updated += 1
             else:
@@ -99,11 +101,57 @@ def sync_claims(claim_type: str, period_from=None, period_to=None) -> dict:
                     MARKET_NAME, claim_type, raw["receipt_id"], raw["market_order_id"], raw["receipt_status"],
                     raw["reason_category1"], raw["reason_category2"], raw["reason_detail"], raw["requested_at"],
                     raw["complete_confirm_type"], raw["complete_confirm_date"], raw_json, account["id"],
+                    release_stop_status=raw.get("release_stop_status") or "",
                 )
                 total_new += 1
 
+        # ★정합성 보정: 이 계정 조회가 '완전히 성공'했을 때만(위에서 continue로 안 빠졌으니 성공),
+        #   DB엔 진행 중인데 이번 응답엔 없는(=쿠팡 목록에서 사라진) 접수를 완료로 정리합니다.
+        #   기간·계정을 벗어난 건은 건드리지 않습니다.
+        if period_from is not None and period_to is not None:
+            try:
+                total_reconciled += claims_repository.reconcile_absent_pending(
+                    claim_type, account["id"], period_from, period_to,
+                    seen_receipt_ids=[r["receipt_id"] for r in raw_claims],
+                    completed_statuses=("RETURNS_COMPLETED",),
+                )
+            except Exception:  # noqa: BLE001 (보정 실패해도 수집 자체는 성공 처리)
+                pass
+
     _mark_synced(f"claim:{claim_type}", total_fetched)
-    return _build_result(total_fetched, total_new, total_updated, errors)
+    result = _build_result(total_fetched, total_new, total_updated, errors)
+    result["reconciled_count"] = total_reconciled
+    return result
+
+
+def approve_cancel_claim(claim: dict) -> dict:
+    """출고중지요청(취소)을 쿠팡에서 승인 처리하고, 성공하면 우리 DB의 그 접수를 완료로 표시합니다.
+    돌려주는 값: {"succeeded": bool, "message": str}"""
+    from repositories import order_repository
+
+    account = market_repository.get_market_account(claim.get("market_account_id"))
+    if not account:
+        return {"succeeded": False, "message": "이 접수가 어느 상점 것인지 확인할 수 없습니다."}
+
+    cancel_count = order_repository.total_quantity_for_market_order(claim.get("market_order_id")) or 1
+    client = _client_for_account(account)
+    try:
+        result = client.approve_return_request(claim["receipt_id"], cancel_count)
+    except CoupangApiError as error:
+        return {"succeeded": False, "message": str(error)}
+
+    if result.get("succeeded"):
+        # 로컬 상태를 완료로 표시 → '현재 접수'에서 빠짐(다음 수집 때 실제 상태로 갱신됨).
+        try:
+            claims_repository.update_claim(
+                claim["id"], "RETURNS_COMPLETED",
+                claim.get("reason_category1"), claim.get("reason_category2"), claim.get("reason_detail"),
+                "VENDOR_CONFIRM", datetime.now().isoformat(timespec="seconds"),
+                claim.get("raw_response_json") or "{}",
+            )
+        except Exception:  # noqa: BLE001 (DB 갱신 실패해도 승인 자체는 성공)
+            pass
+    return result
 
 
 # ---------------- 교환 ----------------

@@ -9,6 +9,7 @@
 # ==========================================================
 
 import sqlite3
+from datetime import datetime
 
 import config
 
@@ -215,6 +216,17 @@ CREATE_TABLE_STATEMENTS = [
     )
     """,
     """
+    -- 사용자 정의 엑셀 양식 (샵마인 '엑셀양식설정'과 같은 방식). 컬럼 순서·제목·매핑값을
+    -- 사용자가 직접 정하고, 그 양식으로 다운로드하면 그 형식대로 엑셀이 나옵니다.
+    CREATE TABLE IF NOT EXISTS excel_templates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        columns_json TEXT NOT NULL,   -- [{"header": 컬럼제목, "value": 매핑값}, ...]
+        created_at TEXT,
+        updated_at TEXT
+    )
+    """,
+    """
     -- 상품 페이지 링크 캐시.
     -- 쿠팡 주문 데이터에는 상품 페이지 주소(productId)가 없고 vendorItemId만
     -- 있습니다. 올바른 상품 URL을 만들려면 productId/itemId가 필요해서, 상품조회
@@ -255,6 +267,7 @@ CREATE_TABLE_STATEMENTS = [
         receipt_id TEXT NOT NULL,            -- 쿠팡 접수번호(receiptId)
         market_order_id TEXT,                -- 쿠팡 주문번호(orderId)
         receipt_status TEXT,                 -- 처리 상태 (쿠팡 receiptStatus)
+        release_stop_status TEXT,            -- 출고중지 처리상태 (쿠팡 releaseStopStatus: 미처리/처리(출고중지)/비대상)
         reason_category1 TEXT,
         reason_category2 TEXT,
         reason_detail TEXT,
@@ -319,6 +332,58 @@ CREATE_TABLE_STATEMENTS = [
         UNIQUE (market_name, inquiry_id)
     )
     """,
+    """
+    -- 문자 발송 이력(자동/수동). 자동 오류문구·관부가세 통보가 언제·어느 번호로·성공/실패했는지
+    -- 눈으로 확인할 수 있게 남깁니다. (dedup 해시만으로는 이력을 알 수 없어서 별도 로그)
+    CREATE TABLE IF NOT EXISTS sms_send_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER REFERENCES orders(id),
+        market_order_id TEXT,
+        phone TEXT,
+        template_key TEXT,     -- customs_error / zipcode_error / customs_tax_notice / (수동)
+        kind TEXT,             -- 'auto' 또는 'manual'
+        success INTEGER,       -- 1 성공 / 0 실패
+        error_message TEXT,    -- 실패 시 사유
+        sent_at TEXT NOT NULL  -- 발송 시각(로컬)
+    )
+    """,
+    """
+    -- 반품 파손 '보상 신청' 상태 추적(로컬). 실제 신청은 쿠팡/CS에서 하고, 여기서는
+    -- 어느 반품 건을 보상 신청했는지/완료했는지 체크리스트로 관리합니다.
+    -- 반품 클레임(claims)의 receipt_id를 키로 씁니다. (쿠팡 재수집이 이 값을 건드리지 않게 별도 표)
+    CREATE TABLE IF NOT EXISTS return_compensation (
+        receipt_id TEXT PRIMARY KEY,   -- 반품 클레임 receipt_id
+        market_order_id TEXT,
+        status TEXT,                   -- '미신청' / '신청함' / '완료' / '해당없음'
+        amount INTEGER,                -- 보상 요청/받은 금액(선택)
+        memo TEXT,
+        updated_at TEXT
+    )
+    """,
+    """
+    -- 매출정리용 원가·배송비(배대지에서 가져오는 두 값). 주문(order_id)별로 저장합니다.
+    -- unit_price_cny = 배대지 신청서의 '단가(위안)'(=원가), shipping_cost = 배송비(원).
+    -- 매입가(한화)·구매비용·순매출·마진율은 이 값 + 환율로 화면/엑셀에서 자동 계산합니다.
+    CREATE TABLE IF NOT EXISTS order_cost (
+        order_id INTEGER PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+        unit_price_cny REAL,           -- 단가(위안) = 원가
+        shipping_cost INTEGER,         -- 배송비(원)
+        updated_at TEXT
+    )
+    """,
+    """
+    -- 상품(판매자상품코드)별 타오바오 구매 링크. 한 상품에 여러 개(2~3개) 저장할 수 있습니다.
+    -- 저장하면 그 상품의 모든 주문에서 바로 타오바오로 갈 수 있습니다.
+    CREATE TABLE IF NOT EXISTS taobao_link (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        seller_product_code TEXT NOT NULL,     -- 판매자상품코드(같은 코드에 링크 여러 개 가능)
+        product_name TEXT,                     -- 참고용 상품명(마지막 저장 시점)
+        url TEXT NOT NULL,                     -- 타오바오/티몰 상품 URL
+        label TEXT,                            -- 링크 구분용 이름(예: 1번, 저렴이, 예비) 선택
+        memo TEXT,
+        updated_at TEXT
+    )
+    """,
 ]
 
 
@@ -346,6 +411,7 @@ ADDITIONAL_COLUMNS = {
         ("quickstar_invoice", "TEXT"),
         ("quickstar_submitted_at", "TEXT"),
         ("cs_memo", "TEXT"),
+        ("cs_memo_updated_at", "TEXT"),  # CS메모를 마지막으로 저장한 시각(메모 전용 날짜)
     ],
     "order_items": [
         ("seller_product_code", "TEXT"),
@@ -361,6 +427,9 @@ ADDITIONAL_COLUMNS = {
         # 통관번호/우편번호 오류 시 자동으로 오류문구(1·2번)를 보낸 뒤, 같은 정보(스냅샷
         # 해시)로 또 보내지 않도록 마지막으로 자동발송한 스냅샷 해시를 기록합니다.
         ("customs_error_sms_sent", "TEXT"),
+        # 관부가세 결재통보가 감지돼 8번(관부가세 통보) 문구를 자동발송한 뒤, 같은 결재통보
+        # (결재통보 처리일시)로 또 보내지 않도록 마지막으로 발송한 결재통보 시각을 기록합니다.
+        ("customs_tax_sms_sent", "TEXT"),
     ],
     "market_accounts": [
         ("platform", "TEXT"),
@@ -378,6 +447,12 @@ ADDITIONAL_COLUMNS = {
         # 답변 내용 (쿠팡에 이미 등록된 답변이거나, 우리가 등록한 답변)
         ("answer_content", "TEXT"),
         ("answered_at", "TEXT"),
+    ],
+    "claims": [
+        # 쿠팡 출고중지 처리상태(releaseStopStatus). '미처리'면 아직 출고중지 요청이
+        # 진행 중(판매자 액션 필요)입니다. receiptStatus가 이미 '완료'여도 이 값이
+        # '미처리'면 Wing 출고중지관리에는 요청으로 남아 있습니다.
+        ("release_stop_status", "TEXT"),
     ],
 }
 
@@ -428,6 +503,67 @@ def _add_missing_columns(connection) -> None:
                 connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
+def _migrate_fix_instruct_back_to_ready(connection) -> None:
+    """
+    (2026-08 1회성 교정) 신규주문=결제완료(ACCEPT), 발송대기=상품준비중(INSTRUCT)이
+    올바른 매핑입니다. 앞선 잘못된 시도로 '상품준비중(INSTRUCT)' 주문이 '신규주문'에
+    잘못 들어간 것을, 원래 자리인 '발송대기'로 되돌립니다. 한 번만 수행합니다.
+
+    (실제 결제완료 ACCEPT 주문과 다른 단계 주문은 건드리지 않습니다. 이후
+    '수집하기'를 누르면 현재 ACCEPT 주문이 신규주문으로 다시 채워집니다.)
+    """
+    flag_key = "migrated_fix_instruct_ready_v3"
+    row = connection.execute(
+        "SELECT value FROM app_settings WHERE key = ?", (flag_key,)
+    ).fetchone()
+    if row is not None:
+        return  # 이미 수행함
+
+    connection.execute(
+        "UPDATE orders SET work_status = ? WHERE work_status = ? AND market_status = ?",
+        ("발송대기", "신규주문", "INSTRUCT"),
+    )
+    connection.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?)",
+        (flag_key, datetime.now().isoformat(timespec="seconds")),
+    )
+
+
+def _migrate_taobao_link_multi(connection) -> None:
+    """
+    (2026-08 1회성) taobao_link을 '상품당 링크 1개'(seller_product_code PK) → '여러 개 가능'
+    (id PK) 스키마로 바꿉니다. 옛 스키마(=id 컬럼 없음)면 기존 데이터를 새 표로 옮기고 교체합니다.
+    """
+    cols = [r[1] for r in connection.execute("PRAGMA table_info(taobao_link)")]
+    if not cols or "id" in cols:
+        return  # 테이블 없음(이미 새 스키마로 생성됨) 또는 이미 새 스키마
+
+    # 옛 스키마 → 새 스키마로 데이터 이관 후 교체
+    connection.execute("DROP TABLE IF EXISTS taobao_link_new")
+    connection.execute(
+        """
+        CREATE TABLE taobao_link_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            seller_product_code TEXT NOT NULL,
+            product_name TEXT,
+            url TEXT NOT NULL,
+            label TEXT,
+            memo TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO taobao_link_new (seller_product_code, product_name, url, memo, updated_at)
+        SELECT seller_product_code, product_name, url, memo, updated_at
+        FROM taobao_link WHERE url IS NOT NULL AND url != ''
+        """
+    )
+    connection.execute("DROP TABLE taobao_link")
+    connection.execute("ALTER TABLE taobao_link_new RENAME TO taobao_link")
+
+
 def init_db() -> None:
     """필요한 테이블이 없으면 만듭니다. 이미 있으면 빠진 컬럼만 추가합니다."""
     statements = _postgres_ddl_statements() if config.use_postgres() else CREATE_TABLE_STATEMENTS
@@ -436,6 +572,9 @@ def init_db() -> None:
         for statement in statements:
             connection.execute(statement)
         _add_missing_columns(connection)
+        _migrate_fix_instruct_back_to_ready(connection)
+        _migrate_taobao_link_multi(connection)
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_taobao_link_code ON taobao_link(seller_product_code)")
         connection.commit()
     finally:
         connection.close()
