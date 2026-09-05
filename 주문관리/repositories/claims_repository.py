@@ -159,8 +159,34 @@ def reconcile_absent_pending(
                 """,
                 (_RESOLVED_STATUS, "NOT_IN_COUPANG_LIST", _now(), _now(), claim_id),
             )
+
+        # ★출고중지 유령 건 정리: release_stop_status='미처리'인데 이번 쿠팡 조회에 없는(사라진)
+        #   접수는, 쿠팡에서 이미 처리/소멸된 것이므로 '처리(소멸)'로 바꿔 '진행 중'에서 뺍니다.
+        #   (이게 없으면 쿠팡엔 없는데 앱에만 미처리로 남아 '출고중지완료 처리'가 500 나던 유령 건)
+        rs_rows = connection.execute(
+            """
+            SELECT id, receipt_id, requested_at
+            FROM claims
+            WHERE claim_type = ? AND market_account_id = ? AND release_stop_status = '미처리'
+            """,
+            (claim_type, market_account_id),
+        ).fetchall()
+        rs_fix = []
+        for row in rs_rows:
+            if str(row["receipt_id"]) in seen:
+                continue  # 이번 조회에 나온 활성 건 → 건드리지 않음
+            req_date = (row["requested_at"] or "")[:10]
+            if not (pf <= req_date <= pt):
+                continue  # 조회 기간 밖은 안전상 제외
+            rs_fix.append(row["id"])
+        for claim_id in rs_fix:
+            connection.execute(
+                "UPDATE claims SET release_stop_status = ?, last_updated_at = ? WHERE id = ?",
+                ("처리(소멸)", _now(), claim_id),
+            )
+
         connection.commit()
-        return len(to_fix)
+        return len(to_fix) + len(rs_fix)
     finally:
         connection.close()
 
