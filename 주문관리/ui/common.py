@@ -2318,8 +2318,8 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
         st.info(empty_message)
         return
 
-    # 🛑 출고중지요청(취소) 바로 승인 — 취소주문 화면에서만.
-    # 버튼 바로 옆 드롭다운에서 '선택한 것만' 한 번에 승인합니다(기본 전체선택).
+    # 🛑 출고중지요청 — 취소주문 화면에서만. 쿠팡 '출고중지완료 처리' API로 실제 처리합니다.
+    # (PUT .../returnRequests/{receiptId}/stoppedShipment — Wing '출고중지완료' 버튼과 동일 동작)
     if claim_type == "CANCEL":
         stop_items = [c for c in pending_claims if _is_release_stop(c)]
         if stop_items:
@@ -2330,33 +2330,33 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
                 return (f"접수 {rid} · 주문 {c.get('market_order_id')} · "
                         f"{c.get('reason_category1') or '-'} · {(c.get('requested_at') or '')[:10]}")
 
-            st.markdown(f"##### 🛑 출고중지요청 — 선택 취소 승인 (진행 중 {len(stop_items)}건)")
+            st.markdown(f"##### 🛑 출고중지요청 — 출고중지완료 처리 (진행 중 {len(stop_items)}건)")
             st.caption(
-                "승인할 출고중지요청을 고른 뒤 버튼을 누르면, **선택한 건만** 쿠팡에서 "
-                "**실제로 취소 승인** 처리됩니다. (기본은 전체 선택, 빼고 싶은 건 X로 제거)"
+                "처리할 건을 고른 뒤 버튼을 누르면, **선택한 건만** 쿠팡에서 **실제로 출고중지완료** "
+                "처리됩니다(발송하지 않고 취소 확정). 기본은 전체 선택입니다."
             )
             picked = st.multiselect(
-                "취소 승인할 출고중지요청",
+                "출고중지완료 처리할 건",
                 options=list(by_receipt.keys()),
                 default=list(by_receipt.keys()),
                 format_func=_fmt_stop,
                 key=f"{claim_type}_stop_pick",
             )
             if st.button(
-                f"✅ 선택한 {len(picked)}건 취소 승인",
-                type="primary", disabled=not picked, key=f"{claim_type}_approve_selected",
+                f"✅ 선택한 {len(picked)}건 출고중지완료 처리",
+                type="primary", disabled=not picked, key=f"{claim_type}_stop_complete",
             ):
                 ok = 0
                 fails = []
-                with st.spinner(f"쿠팡에 취소 승인 처리 중... ({len(picked)}건)"):
+                with st.spinner(f"쿠팡에 출고중지완료 처리 중... ({len(picked)}건)"):
                     for rid in picked:
-                        res = claims_sync_service.approve_cancel_claim(by_receipt[rid])
+                        res = claims_sync_service.complete_release_stop(by_receipt[rid])
                         if res.get("succeeded"):
                             ok += 1
                         else:
                             fails.append(f"접수 {rid}: {res.get('message')}")
                 if ok:
-                    st.success(f"{ok}건 취소 승인 완료")
+                    st.success(f"{ok}건 출고중지완료 처리됨")
                 if fails:
                     st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails))
                 if ok and not fails:

@@ -458,6 +458,25 @@ class CoupangClient:
             return {"succeeded": False, "message": data.get("resultMessage") or "승인 처리 실패"}
         return {"succeeded": True, "message": "취소(출고중지) 승인이 완료되었습니다."}
 
+    def stopped_shipment(self, receipt_id, cancel_count: int) -> dict:
+        """출고중지완료 처리 — 미발송 취소요청을 '출고중지완료'로 확정합니다.
+        (쿠팡 '출고중지완료 처리': PUT .../returnRequests/{receiptId}/stoppedShipment)
+        Wing '출고중지완료' 버튼과 같은 동작. 돌려주는 값: {"succeeded": bool, "message": str}"""
+        if self.mode == "mock":
+            return {"succeeded": True, "message": "(Mock) 출고중지완료 처리됨."}
+        self._check_credentials()
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/returnRequests/{int(receipt_id)}/stoppedShipment"
+        body = {
+            "vendorId": self.vendor_id,
+            "receiptId": int(receipt_id),
+            "cancelCount": int(cancel_count),
+        }
+        resp = self._request("PUT", path, params={}, json_body=body)
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if isinstance(data, dict) and data.get("resultCode") and str(data.get("resultCode")).upper() not in ("SUCCESS", "200"):
+            return {"succeeded": False, "message": data.get("resultMessage") or "출고중지완료 처리 실패"}
+        return {"succeeded": True, "message": "출고중지완료 처리가 완료되었습니다."}
+
     def fetch_claims(self, claim_type: str, period_from=None, period_to=None) -> list:
         """
         취소요청(claim_type='CANCEL') 또는 반품요청(claim_type='RETURN')을 가져옵니다.

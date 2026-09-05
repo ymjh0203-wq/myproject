@@ -124,6 +124,39 @@ def sync_claims(claim_type: str, period_from=None, period_to=None) -> dict:
     return result
 
 
+def complete_release_stop(claim: dict) -> dict:
+    """출고중지완료 처리 — 미발송 취소요청을 쿠팡에 '출고중지완료'로 확정합니다.
+    (Wing '출고중지완료' 버튼과 같은 동작. PUT .../returnRequests/{receiptId}/stoppedShipment)
+    성공하면 로컬 release_stop_status도 '처리(출고중지)'로 갱신합니다.
+    돌려주는 값: {"succeeded": bool, "message": str}"""
+    from repositories import order_repository
+
+    account = market_repository.get_market_account(claim.get("market_account_id"))
+    if not account:
+        return {"succeeded": False, "message": "이 접수가 어느 상점 것인지 확인할 수 없습니다."}
+
+    cancel_count = order_repository.total_quantity_for_market_order(claim.get("market_order_id")) or 1
+    client = _client_for_account(account)
+    try:
+        result = client.stopped_shipment(claim["receipt_id"], cancel_count)
+    except CoupangApiError as error:
+        return {"succeeded": False, "message": str(error)}
+
+    if result.get("succeeded"):
+        # 로컬 출고중지 상태를 '처리(출고중지)'로 갱신 → '진행 중' 목록에서 빠짐.
+        try:
+            claims_repository.update_claim(
+                claim["id"], claim.get("receipt_status") or "RETURNS_COMPLETED",
+                claim.get("reason_category1"), claim.get("reason_category2"), claim.get("reason_detail"),
+                claim.get("complete_confirm_type") or "", claim.get("complete_confirm_date") or "",
+                claim.get("raw_response_json") or "{}",
+                release_stop_status="처리(출고중지)",
+            )
+        except Exception:  # noqa: BLE001 (DB 갱신 실패해도 처리 자체는 성공)
+            pass
+    return result
+
+
 def approve_cancel_claim(claim: dict) -> dict:
     """출고중지요청(취소)을 쿠팡에서 승인 처리하고, 성공하면 우리 DB의 그 접수를 완료로 표시합니다.
     돌려주는 값: {"succeeded": bool, "message": str}"""
@@ -142,6 +175,9 @@ def approve_cancel_claim(claim: dict) -> dict:
 
     if result.get("succeeded"):
         # 로컬 상태를 완료로 표시 → '현재 접수'에서 빠짐(다음 수집 때 실제 상태로 갱신됨).
+        # ⚠️ release_stop_status(출고중지)는 여기서 건드리지 않습니다. 이 approval API는
+        #   출고중지 처리(미처리→처리)를 못 하기 때문입니다(쿠팡 오픈API에 해당 기능 없음).
+        #   억지로 로컬만 '처리'로 바꾸면 Wing과 어긋나 '처리된 척'하게 되므로 그대로 둡니다.
         try:
             claims_repository.update_claim(
                 claim["id"], "RETURNS_COMPLETED",
