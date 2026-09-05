@@ -14,8 +14,8 @@
 import pandas as pd
 import streamlit as st
 
-from repositories import inquiry_repository
-from services import claims_sync_service
+from repositories import inquiry_repository, order_repository
+from services import claims_sync_service, product_link_service
 from ui import common, settings
 
 
@@ -72,29 +72,33 @@ def _render_list_with_detail(rows: list, key: str) -> None:
     형태로 보여줍니다. (표에서는 '내용'이 잘려서 안 보이기 때문에)
     상품문의라면 여기서 바로 답변을 써서 쿠팡에 보낼 수 있습니다.
     """
-    # 밑줄로 시작하는 항목은 내부 처리용이라 표에는 안 보이게 합니다.
+    # 다른 단계와 같은 AG-Grid 표(왼쪽 체크박스+머리글 전체선택, 컬럼 드래그 순서저장).
+    # 밑줄로 시작하는 항목은 내부 처리용이라 표에는 안 보이게 하고, 체크박스가 달리도록
+    # 맨 앞에 'No' 번호를 붙입니다. (답변 등록에는 내부 항목이 필요하므로 orders엔 원본을 넘김)
+    from ui import aggrid_table
+
     visible_rows = [{k: v for k, v in row.items() if not k.startswith("_")} for row in rows]
-    df = pd.DataFrame(visible_rows)
-    table_height = max(100, min(common.TABLE_ROW_HEIGHT * (len(rows) + 1) + 3, 600))
-    event = st.dataframe(
-        df,
-        hide_index=True,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=f"{key}_table",
-        height=table_height,
-        row_height=common.TABLE_ROW_HEIGHT,
-        width="stretch",
+    grid_rows = []
+    for i, vr in enumerate(visible_rows):
+        grid_row = {"No": i + 1}
+        grid_row.update(vr)
+        grid_rows.append(grid_row)
+    grid_df = pd.DataFrame(grid_rows) if grid_rows else pd.DataFrame(columns=["No"])
+
+    st.caption(
+        "표 왼쪽 체크박스를 체크하면 아래에 문의 전체 내용이 나타납니다. "
+        "컬럼(항목)은 마우스로 끌어 순서를 바꿀 수 있고 자동 저장됩니다."
+    )
+    selected_records, _edited, _clicked = aggrid_table.render_orders_grid(
+        grid_df, key=key, orders=rows, height=440
     )
     st.caption(f"총 {len(rows)}건")
 
-    selected = event.selection.rows
-    # 답변을 보내거나 필터가 바뀌면 목록이 줄어드는데, 표에는 조금 전 클릭한 행
-    # 번호가 남아있을 수 있습니다. 그 번호가 지금 목록 범위를 벗어나면 무시합니다.
-    # (안 그러면 rows[없는 번호]에서 오류가 납니다)
-    if len(selected) == 1 and 0 <= selected[0] < len(rows):
-        detail = rows[selected[0]]
-        st.markdown("**문의 상세내용** (행을 다시 클릭하면 닫힙니다)")
+    st.divider()
+    if selected_records:
+        # 체크한 문의(여럿이면 마지막)의 전체 내용을 아래에 보여줍니다.
+        detail = selected_records[-1]
+        st.markdown("**문의 상세내용**")
         detail_df = pd.DataFrame(
             [(k, str(v)) for k, v in detail.items() if not k.startswith("_")],
             columns=["항목", "값"],
@@ -109,12 +113,23 @@ def _render_list_with_detail(rows: list, key: str) -> None:
                 "동작하지 않아서 아직 연결하지 않았습니다."
             )
 
+        # 이 문의의 원주문 상세내역(고객·상품·주소 등)도 함께 — 발송대기 상세처럼.
+        _moid = detail.get("상품/주문번호")
+        if _moid and str(_moid) not in ("", "-"):
+            _order = order_repository.get_full_order_by_market_id(_moid)
+            if _order:
+                st.divider()
+                st.markdown("**주문 상세내역**")
+                common.render_full_detail(_order, reveal=True)
+    else:
+        st.caption("표 왼쪽 체크박스를 체크하면 여기에 문의 전체 내용이 나타납니다.")
+
 
 def _collect_clicked(period_from, period_to) -> None:
-    """상품문의 + 콜센터문의를 둘 다 수집합니다."""
-    if period_from > period_to:
-        st.error("시작일이 종료일보다 늦을 수 없습니다.")
-        return
+    """상품문의 + 콜센터문의를 둘 다 수집합니다. (수집은 항상 '오늘까지'로 새 문의를 놓치지 않게)"""
+    from datetime import date
+    period_to = date.today()
+    period_from = min(period_from, period_to)
     errors = []
     # 콜센터문의는 쿠팡 API가 계속 500 오류를 내서 기본으로 꺼져 있습니다.
     # (설정 > 수집 설정에서 켤 수 있습니다)
@@ -161,8 +176,17 @@ def _unified_rows() -> list:
                 # 상품 단위로만 맞춘 경우 옵션은 다른 옵션일 수 있어 표시하지 않습니다.
                 option_name = "(옵션 확인 불가)"
         else:
-            product_name = "(주문 내역에 없는 상품)"
-            option_name = "-"
+            # 주문에 없는 상품(일반 문의)이면 쿠팡 상품조회로 상품명/옵션명을 알아냅니다.
+            # (한 번 조회하면 캐시되어 다음부터는 API 없이 바로 표시됩니다 - 쿠팡 Wing처럼)
+            resolved = product_link_service.resolve_inquiry_product(
+                i.get("seller_product_id"), i.get("vendor_item_id"), i.get("market_account_id")
+            )
+            if resolved and resolved.get("product_name"):
+                product_name = resolved["product_name"]
+                option_name = resolved.get("option_name") or "-"
+            else:
+                product_name = "(주문 내역에 없는 상품)"
+                option_name = "-"
 
         rows.append(
             {
@@ -225,30 +249,18 @@ def render() -> None:
     if st.button("수집하기", type="primary", width="stretch", key="cs_inq_collect"):
         _collect_clicked(period_from, period_to)
 
+    rows = _unified_rows()
+    # ★'현재 미답변(처리 필요)' 건수 = 누적 전체가 아니라 지금 답변해야 할 문의 수.
+    pending_cnt = sum(1 for r in rows if r.get("_needs_action"))
     p_at = claims_sync_service.get_last_sync_at("product_inquiry")
-    p_cnt = claims_sync_service.get_last_fetched_count("product_inquiry")
     c_at = claims_sync_service.get_last_sync_at("call_center_inquiry")
-    c_cnt = claims_sync_service.get_last_fetched_count("call_center_inquiry")
-    if settings.is_call_center_sync_enabled():
-        if p_at or c_at:
-            st.info(
-                f"**쿠팡 기준 현재 상품문의 {p_cnt if p_cnt is not None else '-'}건 / "
-                f"콜센터문의 {c_cnt if c_cnt is not None else '-'}건** "
-                f"(마지막 확인: {p_at or c_at})"
-            )
-        else:
-            st.caption("아직 한 번도 수집하지 않았습니다.")
-    elif p_at:
-        st.info(
-            f"**쿠팡 기준 현재 상품문의 {p_cnt if p_cnt is not None else '-'}건** "
-            f"(마지막 확인: {p_at})"
-        )
+    if p_at or c_at:
+        st.info(f"**현재 미답변 CS문의: {pending_cnt}건** (마지막 확인: {p_at or c_at})")
     else:
         st.caption("아직 한 번도 수집하지 않았습니다.")
 
     st.divider()
 
-    rows = _unified_rows()
     if not rows:
         st.info("CS문의 내역이 없습니다. 위 '수집하기'를 눌러보세요.")
         return

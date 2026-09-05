@@ -13,13 +13,13 @@ from database import get_connection
 
 
 def get(vendor_item_id: str) -> dict:
-    """vendorItemId로 캐시된 productId/itemId를 돌려줍니다. 없으면 None."""
+    """vendorItemId로 캐시된 productId/itemId/상품명/옵션명을 돌려줍니다. 없으면 None."""
     if not vendor_item_id:
         return None
     connection = get_connection()
     try:
         row = connection.execute(
-            "SELECT product_id, item_id FROM product_link_cache WHERE vendor_item_id = ?",
+            "SELECT product_id, item_id, product_name, item_name FROM product_link_cache WHERE vendor_item_id = ?",
             (str(vendor_item_id),),
         ).fetchone()
         return dict(row) if row else None
@@ -27,12 +27,12 @@ def get(vendor_item_id: str) -> dict:
         connection.close()
 
 
-def save_many(product_id: str, items: list) -> None:
+def save_many(product_id: str, items: list, product_name: str = "") -> None:
     """
-    상품조회 한 번으로 알아낸 그 상품의 모든 옵션(vendorItemId -> itemId)을
+    상품조회 한 번으로 알아낸 그 상품의 모든 옵션(vendorItemId -> itemId/옵션명)을
     한꺼번에 저장합니다. 이러면 같은 상품의 다른 옵션도 이후엔 API 없이 바로
-    링크를 만들 수 있습니다.
-    items: [{"vendor_item_id": str, "item_id": str}, ...]
+    링크·상품명을 쓸 수 있습니다.
+    items: [{"vendor_item_id": str, "item_id": str, "item_name": str}, ...]
     """
     now = datetime.now().isoformat(timespec="seconds")
     connection = get_connection()
@@ -43,14 +43,18 @@ def save_many(product_id: str, items: list) -> None:
                 continue
             connection.execute(
                 """
-                INSERT INTO product_link_cache (vendor_item_id, product_id, item_id, resolved_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO product_link_cache
+                    (vendor_item_id, product_id, item_id, product_name, item_name, resolved_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(vendor_item_id) DO UPDATE SET
                     product_id = excluded.product_id,
                     item_id = excluded.item_id,
+                    product_name = excluded.product_name,
+                    item_name = excluded.item_name,
                     resolved_at = excluded.resolved_at
                 """,
-                (str(vendor_item_id), str(product_id), str(item.get("item_id") or ""), now),
+                (str(vendor_item_id), str(product_id), str(item.get("item_id") or ""),
+                 str(product_name or ""), str(item.get("item_name") or ""), now),
             )
         connection.commit()
     finally:

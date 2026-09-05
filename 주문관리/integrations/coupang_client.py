@@ -536,14 +536,18 @@ class CoupangClient:
         product_id = data.get("productId")
         if not product_id:
             return None
+        product_name = data.get("sellerProductName") or ""
         items = []
         for item in data.get("items") or []:
             vendor_item_id = item.get("vendorItemId")
             if vendor_item_id:
-                items.append(
-                    {"vendor_item_id": str(vendor_item_id), "item_id": str(item.get("itemId") or "")}
-                )
-        return {"product_id": str(product_id), "items": items}
+                items.append({
+                    "vendor_item_id": str(vendor_item_id),
+                    "item_id": str(item.get("itemId") or ""),
+                    # 옵션명(itemName). 상품문의 등에서 주문 없이도 옵션을 보여주는 데 씁니다.
+                    "item_name": item.get("itemName") or item.get("vendorItemName") or "",
+                })
+        return {"product_id": str(product_id), "product_name": product_name, "items": items}
 
     def fetch_revenue_history(self, recognition_from, recognition_to) -> dict:
         """

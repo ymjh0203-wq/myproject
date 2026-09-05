@@ -54,4 +54,40 @@ def ensure_links_for_order(order: dict) -> None:
         resolved_products.add(seller_product_id)
         info = client.fetch_seller_product(seller_product_id)
         if info and info.get("items"):
-            product_link_repository.save_many(info["product_id"], info["items"])
+            product_link_repository.save_many(
+                info["product_id"], info["items"], product_name=info.get("product_name") or ""
+            )
+
+
+def resolve_inquiry_product(seller_product_id: str, vendor_item_id: str, market_account_id) -> dict:
+    """
+    상품문의 등에서 '주문에 없는 상품'의 상품명/옵션명을 쿠팡 상품조회로 알아냅니다.
+    캐시에 있으면 API 없이 바로 돌려주고, 없으면 한 번 조회해 캐시에 저장합니다.
+    반환: {"product_name": str, "option_name": str} 또는 조회 실패 시 None.
+    (화면 렌더 중 호출되므로 실패해도 조용히 None을 돌려줍니다)
+    """
+    if vendor_item_id:
+        cached = product_link_repository.get(vendor_item_id)
+        if cached and cached.get("product_name"):
+            return {"product_name": cached.get("product_name") or "",
+                    "option_name": cached.get("item_name") or ""}
+    if not seller_product_id:
+        return None
+    account = market_repository.get_market_account(market_account_id)
+    if not account or account.get("connection_type") != "api" or not account.get("api_vendor_id"):
+        return None
+    try:
+        info = _client_for_account(account).fetch_seller_product(seller_product_id)
+    except Exception:  # noqa: BLE001 (링크/상품명 하나 못 만든다고 화면이 멈추면 안 됨)
+        return None
+    if not info or not info.get("items"):
+        return None
+    product_link_repository.save_many(
+        info["product_id"], info["items"], product_name=info.get("product_name") or ""
+    )
+    option_name = ""
+    for it in info["items"]:
+        if str(it.get("vendor_item_id")) == str(vendor_item_id):
+            option_name = it.get("item_name") or ""
+            break
+    return {"product_name": info.get("product_name") or "", "option_name": option_name}

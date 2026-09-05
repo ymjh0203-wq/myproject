@@ -448,6 +448,11 @@ ADDITIONAL_COLUMNS = {
         ("answer_content", "TEXT"),
         ("answered_at", "TEXT"),
     ],
+    "product_link_cache": [
+        # 상품문의 등에서 주문 없이도 상품명/옵션명을 보여주기 위해 캐시합니다.
+        ("product_name", "TEXT"),
+        ("item_name", "TEXT"),
+    ],
     "claims": [
         # 쿠팡 출고중지 처리상태(releaseStopStatus). '미처리'면 아직 출고중지 요청이
         # 진행 중(판매자 액션 필요)입니다. receiptStatus가 이미 '완료'여도 이 값이
