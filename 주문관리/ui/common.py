@@ -1536,7 +1536,7 @@ def pick_detail_target(selected: list, key: str):
 
 
 @st.fragment
-def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders, table_width_percent, detail_renderer, multi_select=False):
+def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders, table_width_percent, detail_renderer, multi_select=False, editable=None):
     """
     발송대기와 동일한 AG-Grid 표(왼쪽 체크박스 + 머리글 전체선택, 마우스로 컬럼 드래그
     순서변경·자동저장, 행 순번 드래그)를 그립니다. 아무것도 체크 안 하면 표가 전체폭으로
@@ -1559,6 +1559,9 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
     if sorted_rows and "No" in sorted_rows[0] and "No" not in cols:
         cols = ["No"] + cols
     grid_df = pd.DataFrame(sorted_rows)[cols] if sorted_rows else pd.DataFrame(columns=cols)
+    # 인라인 편집(editable)이면, fragment 재실행에도 입력값이 유지되도록 직전 편집을 복원합니다.
+    if editable:
+        _restore_persisted_edits(grid_df, key, list(editable.keys()))
 
     # ★컬럼 '구조'는 항상 2단으로 고정하고, 폭 '비율'만 바꿉니다. 구조(컨테이너↔컬럼)를
     #   바꾸면 AG-Grid가 재생성되어 체크가 풀리고 화면이 튀기 때문입니다. 상세가 없을 땐
@@ -1589,11 +1592,19 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
     col_table, col_detail = st.columns([table_pct, 100 - table_pct] if show_detail else [100, 1])
     with col_table:
         selected, _edited_df, _clicked = aggrid_table.render_orders_grid(
-            grid_df, key=key, orders=sorted_orders, height=grid_h
+            grid_df, key=key, orders=sorted_orders, height=grid_h, editable=editable
         )
         st.caption(f"총 {len(sorted_rows)}건")
 
     st.session_state[f"{key}_selected_orders"] = selected
+    # 인라인 편집값(택배사·송장번호 등)을 세션에 저장 → 바깥(화면)에서 읽어 일괄 처리에 씁니다.
+    if editable:
+        try:
+            _recs = _edited_df.to_dict("records")
+            if _recs:
+                st.session_state[f"{key}_edited_records"] = _recs
+        except Exception:  # noqa: BLE001
+            pass
     target = pick_detail_target(selected, key) if show_detail else None
 
     with col_detail:
@@ -1758,7 +1769,7 @@ def render_grid_detail(grid_df, key, orders, detail_renderer, empty_caption="표
                 detail_renderer(target)
 
 
-def render_full_table(filtered_rows: list, filtered_orders: list, key: str, invoice_editable: bool = False, detail_renderer=None, multi_select=False):
+def render_full_table(filtered_rows: list, filtered_orders: list, key: str, invoice_editable: bool = False, detail_renderer=None, multi_select=False, editable=None):
     """
     엑셀 양식 전체 컬럼 표를 그리고, 정렬 기준/너비/높이 조절과 행 선택 기능을
     함께 제공합니다. 여러 목록 화면(신규주문/발송대기/배송중/배송완료/구매확정)이
@@ -1870,8 +1881,16 @@ def render_full_table(filtered_rows: list, filtered_orders: list, key: str, invo
     # (체크할 때 화면 전체가 아니라 그 부분만 갱신 → 스크롤이 위로 튀지 않음)
     # fragment는 반환값을 바깥으로 못 넘기므로, 선택 결과는 세션에서 읽어 돌려줍니다.
     if detail_renderer is not None and not invoice_editable:
+        # editable(예: 배송중의 택배사·송장번호 인라인 편집)이 주어지면, 그 컬럼이 표에
+        # 반드시 보여야 편집할 수 있으므로 표시 컬럼에 넣어줍니다.
+        cols_for_grid = list(summary_columns)
+        if editable:
+            for _ec in editable.keys():
+                if _ec not in cols_for_grid:
+                    cols_for_grid.append(_ec)
         _render_table_with_fragment(
-            key, summary_columns, sorted_rows, sorted_orders, table_width_percent, detail_renderer, multi_select
+            key, cols_for_grid, sorted_rows, sorted_orders, table_width_percent, detail_renderer,
+            multi_select, editable=editable,
         )
         selected = st.session_state.get(f"{key}_selected_orders", [])
         return None, selected, selected, None

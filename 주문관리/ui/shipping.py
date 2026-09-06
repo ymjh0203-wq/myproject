@@ -287,50 +287,58 @@ def render() -> None:
     # 샵마인식 액션 버튼 바. 배송중은 확인/처리 주 버튼이 없습니다(유틸 버튼만).
     common.render_shopmine_action_bar("shipping", filtered_orders)
 
-    # 상세 = 기본 상세내역 + '송장 수정' 폼(배송중 주문의 택배사·운송장번호 변경).
+    # 상세 = 기본 상세내역만. (송장 수정은 아래 표에서 택배사·송장번호를 직접 고쳐 일괄 처리)
     def _shipping_detail(order):
         common.render_full_detail(order, reveal)
-        with st.expander("✏️ 송장 수정 (배송중 주문의 택배사·운송장 변경)", expanded=False):
-            st.caption("잘못 등록된 송장을 쿠팡에서 **실제로 수정**합니다. (배송중 주문 대상)")
-            courier_codes = list(models.COURIER_CODES.keys())
-            # 기본값 = '쿠팡에 실제 등록된 현재 송장'(market_*)으로 채웁니다(표에 보이는 값과 일치).
-            # 택배사는 등록된 택배사명(예: CJ대한통운)을 코드(CJGLS)로 역매핑합니다.
-            _name_to_code = {name: code for code, name in models.COURIER_CODES.items()}
-            cur_code = (
-                _name_to_code.get((order.get("market_delivery_company_name") or "").strip())
-                or order.get("delivery_company_code")
-                or settings.get_default_courier_code()
-            )
-            cur_idx = courier_codes.index(cur_code) if cur_code in courier_codes else 0
-            new_code = st.selectbox(
-                "택배사", courier_codes, index=cur_idx,
-                format_func=lambda c: f"{models.COURIER_CODES[c]} ({c})",
-                key=f"ship_edit_courier_{order['id']}",
-            )
-            cur_inv = order.get("market_invoice_number") or order.get("invoice_number") or ""
-            new_inv = st.text_input("송장번호", value=cur_inv, key=f"ship_edit_inv_{order['id']}")
-            confirm = st.checkbox(
-                "위 내용으로 쿠팡에 송장을 수정합니다 (실제 반영, 되돌리려면 다시 수정)",
-                key=f"ship_edit_confirm_{order['id']}",
-            )
-            if st.button("송장 수정", type="primary", key=f"ship_edit_btn_{order['id']}", disabled=not confirm):
-                if not new_inv.strip():
-                    st.error("송장번호를 입력해주세요.")
-                else:
-                    with st.spinner("쿠팡에 송장 수정 중..."):
-                        res = sync_service.update_invoice_for_shipping(order, new_code, new_inv.strip())
-                    if res["succeeded"]:
-                        st.success(f"송장 수정 완료: {models.COURIER_CODES.get(new_code, new_code)} {new_inv.strip()}")
-                        st.rerun(scope="app")
-                    else:
-                        st.error(f"송장 수정 실패: {res['message']}")
 
-    # 행(셀) 클릭 → 오른쪽 상세. 표+상세를 fragment로 그려 스크롤이 위로 안 튐.
+    # ✏️ 표 안에서 택배사·송장번호를 '직접 클릭해 수정'할 수 있게 편집표로 그립니다.
+    st.caption(
+        "✏️ **송장 수정**: 아래 표에서 **택배사·송장번호 칸을 직접 클릭해 고친 뒤**, 그 주문의 "
+        "**왼쪽 체크박스를 체크**하고 아래 **‘선택 송장 수정’** 버튼을 누르면 쿠팡에 실제로 반영됩니다."
+    )
+    _courier_names = list(dict.fromkeys(models.COURIER_CODES.values()))  # 택배사명 목록(드롭다운용)
+    _ship_editable = {
+        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_names}},
+        "송장번호": {"cellEditor": "agTextCellEditor"},
+    }
     common.render_full_table(
         filtered_rows, filtered_orders, key="shipping",
         detail_renderer=_shipping_detail,
         multi_select=True,
+        editable=_ship_editable,
     )
+
+    # 표에서 고친 택배사·송장번호로, 체크한 주문을 쿠팡에 일괄 송장수정.
+    if st.button("✏️ 선택한 주문 송장 수정 (쿠팡 실제 반영)", type="primary", key="shipping_bulk_invoice_edit"):
+        checked = st.session_state.get("shipping_selected_orders", []) or []
+        records = st.session_state.get("shipping_edited_records", []) or []
+        if not checked:
+            st.warning("표에서 택배사·송장번호를 고친 뒤, 그 주문의 왼쪽 체크박스를 체크하고 눌러주세요.")
+        else:
+            edit_by_moid = {str(r.get("주문번호")): r for r in records}
+            name_to_code = {name: code for code, name in models.COURIER_CODES.items()}
+            ok = 0
+            fails = []
+            with st.spinner(f"쿠팡에 송장 수정 중... ({len(checked)}건)"):
+                for o in checked:
+                    er = edit_by_moid.get(str(o["market_order_id"]))
+                    courier_name = str((er or {}).get("택배사") or "").strip()
+                    inv = str((er or {}).get("송장번호") or "").strip()
+                    code = name_to_code.get(courier_name) or o.get("delivery_company_code")
+                    if not code or not inv or inv.lower() in ("-", "nan", ""):
+                        fails.append(f"{o['market_order_id']}: 택배사/송장번호를 확인해주세요")
+                        continue
+                    res = sync_service.update_invoice_for_shipping(o, code, inv)
+                    if res.get("succeeded"):
+                        ok += 1
+                    else:
+                        fails.append(f"{o['market_order_id']}: {res.get('message')}")
+            if ok:
+                st.success(f"{ok}건 송장 수정 완료")
+            if fails:
+                st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails))
+            if ok and not fails:
+                st.rerun(scope="app")
 
     # 표 아래 합계 요약 바(총 건수·결제·수수료·정산) — 신규주문과 동일.
     common.render_order_summary_bar(filtered_orders)
