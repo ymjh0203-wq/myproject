@@ -155,7 +155,7 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
         changes = res.get("changes") or []
         st.caption(
             f"조회 {res['scanned']}건 · GR있음 {res['with_gr']} · 가송장없음 {res['no_invoice']} · "
-            f"오류 {res['errors']} → **변경 대상 {len(changes)}건**"
+            f"업체직송제외 {res.get('skipped_direct', 0)} · 오류 {res['errors']} → **변경 대상 {len(changes)}건**"
         )
         if res.get("error_samples"):
             with st.expander(f"오류 {res['errors']}건 보기"):
