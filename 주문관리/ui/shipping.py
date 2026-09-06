@@ -293,14 +293,21 @@ def render() -> None:
         with st.expander("✏️ 송장 수정 (배송중 주문의 택배사·운송장 변경)", expanded=False):
             st.caption("잘못 등록된 송장을 쿠팡에서 **실제로 수정**합니다. (배송중 주문 대상)")
             courier_codes = list(models.COURIER_CODES.keys())
-            cur_code = order.get("delivery_company_code") or settings.get_default_courier_code()
+            # 기본값 = '쿠팡에 실제 등록된 현재 송장'(market_*)으로 채웁니다(표에 보이는 값과 일치).
+            # 택배사는 등록된 택배사명(예: CJ대한통운)을 코드(CJGLS)로 역매핑합니다.
+            _name_to_code = {name: code for code, name in models.COURIER_CODES.items()}
+            cur_code = (
+                _name_to_code.get((order.get("market_delivery_company_name") or "").strip())
+                or order.get("delivery_company_code")
+                or settings.get_default_courier_code()
+            )
             cur_idx = courier_codes.index(cur_code) if cur_code in courier_codes else 0
             new_code = st.selectbox(
                 "택배사", courier_codes, index=cur_idx,
                 format_func=lambda c: f"{models.COURIER_CODES[c]} ({c})",
                 key=f"ship_edit_courier_{order['id']}",
             )
-            cur_inv = order.get("invoice_number") or order.get("market_invoice_number") or ""
+            cur_inv = order.get("market_invoice_number") or order.get("invoice_number") or ""
             new_inv = st.text_input("송장번호", value=cur_inv, key=f"ship_edit_inv_{order['id']}")
             confirm = st.checkbox(
                 "위 내용으로 쿠팡에 송장을 수정합니다 (실제 반영, 되돌리려면 다시 수정)",

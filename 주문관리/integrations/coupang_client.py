@@ -71,8 +71,11 @@ ORDER_QUERY_MAX_DAYS = 31
 # 상품준비중 처리(신규주문 -> 발송대기): "Changing the status to Product in Preparation" 문서 기준
 ACKNOWLEDGEMENT_PATH_TEMPLATE = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/ordersheets/acknowledgement"
 ACKNOWLEDGEMENT_BATCH_SIZE = 50  # 한 번에 최대 50건까지 요청 가능
-# 송장업로드 처리(발송대기 -> 배송중): "송장업로드 처리" 문서 기준
+# 송장업로드 처리(발송대기 -> 배송중): "송장업로드 처리" 문서 기준 (POST)
 INVOICE_PATH_TEMPLATE = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/orders/invoices"
+# 송장업데이트 처리(배송중 주문의 송장 수정): "송장업데이트 처리" 문서 기준 (POST, 다른 경로!)
+# ★업로드는 /orders/invoices 이지만, 수정은 /orders/updateInvoices 이고 메서드도 POST입니다.
+UPDATE_INVOICE_PATH_TEMPLATE = "/v2/providers/openapi/apis/api/v4/vendors/{vendor_id}/orders/updateInvoices"
 
 # 취소/반품 조회: "Return/Cancellation Request List Query" 문서 기준 (2026-07-20 확인)
 # 같은 API를 cancelType 파라미터(CANCEL/RETURN)로 구분해서 씁니다.
@@ -408,10 +411,11 @@ class CoupangClient:
         return self._update_invoice_real(order, delivery_company_code, invoice_number)
 
     def _update_invoice_real(self, order: dict, delivery_company_code: str, invoice_number: str) -> dict:
-        """쿠팡 오픈API 송장업데이트: PUT .../orders/invoices (등록과 같은 엔드포인트·본문, 메서드만 PUT).
-        배송지시/배송중 상태 주문의 택배사·운송장번호를 바꿉니다."""
+        """쿠팡 오픈API 송장업데이트: POST .../orders/updateInvoices (수정 전용 엔드포인트).
+        배송지시/배송중 상태 주문의 택배사·운송장번호를 바꿉니다.
+        (업로드 /orders/invoices 와 경로·메서드가 다릅니다. PUT/invoices는 404가 납니다.)"""
         self._check_credentials()
-        path = INVOICE_PATH_TEMPLATE.format(vendor_id=self.vendor_id)
+        path = UPDATE_INVOICE_PATH_TEMPLATE.format(vendor_id=self.vendor_id)
         apply_dtos = [
             {
                 "shipmentBoxId": int(order["shipment_box_id"]),
@@ -421,11 +425,12 @@ class CoupangClient:
                 "vendorItemId": int(item["market_item_id"]),
                 "splitShipping": False,
                 "preSplitShipped": False,
+                "estimatedShippingDate": "",
             }
             for item in order["items"]
         ]
         body = {"vendorId": self.vendor_id, "orderSheetInvoiceApplyDtos": apply_dtos}
-        response = self._request("PUT", path, params={}, json_body=body)
+        response = self._request("POST", path, params={}, json_body=body)
         data = response.get("data") or {}
         response_list = data.get("responseList") or []
         failed = [
