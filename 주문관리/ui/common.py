@@ -1597,12 +1597,18 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
         st.caption(f"총 {len(sorted_rows)}건")
 
     st.session_state[f"{key}_selected_orders"] = selected
-    # 인라인 편집값(택배사·송장번호 등)을 세션에 저장 → 바깥(화면)에서 읽어 일괄 처리에 씁니다.
+    # 인라인 편집값(택배사·송장번호 등)을 세션에 '누적' 저장합니다. 검색(필터)을 바꿔도
+    # 이전에 고친 값이 사라지지 않게, 현재 화면 행들을 주문번호 기준으로 병합합니다.
+    # → 검색을 바꿔가며 여러 건을 고친 뒤 한 번에 일괄 처리할 수 있습니다.
     if editable:
         try:
             _recs = _edited_df.to_dict("records")
             if _recs:
-                st.session_state[f"{key}_edited_records"] = _recs
+                _prev = st.session_state.get(f"{key}_edited_records", []) or []
+                _by_moid = {str(r.get("주문번호")): r for r in _prev}
+                for _r in _recs:
+                    _by_moid[str(_r.get("주문번호"))] = _r
+                st.session_state[f"{key}_edited_records"] = list(_by_moid.values())
         except Exception:  # noqa: BLE001
             pass
     target = pick_detail_target(selected, key) if show_detail else None
