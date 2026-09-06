@@ -1362,8 +1362,11 @@ def render_taobao_link_section(order: dict) -> None:
         st.caption("이 주문에는 판매자상품코드가 없어 타오바오 링크를 연결할 수 없습니다.")
 
 
-def render_full_detail(order: dict, reveal: bool) -> None:
+def render_full_detail(order: dict, reveal: bool, with_cs_memo: bool = True) -> None:
     """
+    with_cs_memo=False면 CS메모 편집기를 그리지 않습니다(클레임 상세처럼 상위에서
+    CS메모를 따로 그릴 때, 같은 주문에 편집기가 두 번 그려져 폼 키가 충돌하는 것 방지).
+
     평상시(행을 선택하지 않았을 때)에는 화면에 나타나지 않고, 표에서 행을
     하나 클릭했을 때만 나타나는 상세정보입니다. 엑셀 양식의 72개 항목을
     전부 항목/값 형태로 보여주고, 통관검증에서 문제가 있었던 항목(이름/
@@ -1414,7 +1417,8 @@ def render_full_detail(order: dict, reveal: bool) -> None:
     # 상품별 타오바오 구매 링크(판매자상품코드 기준). 한 번 저장하면 그 상품의 모든 주문에서 바로 이동.
     render_taobao_link_section(order)
 
-    render_cs_memo_editor(order)
+    if with_cs_memo:
+        render_cs_memo_editor(order)
 
     detail_rows = [
         (col, _with_check(str(row[col]), field_check_messages.get(col)))
@@ -2173,9 +2177,12 @@ def render_records_table(rows: list, key: str, caption: str = None) -> None:
         if moid and str(moid) not in ("", "-"):
             order = order_repository.get_full_order_by_market_id(moid)
             if order:
+                # CS메모는 잘 보이게 상세 '맨 위'에 둡니다(취소·반품·반품완료·교환 공통).
+                # 아래 '주문 상세내역'에서는 with_cs_memo=False로 중복 편집기를 막습니다.
                 st.divider()
+                render_cs_memo_editor(order)
                 st.markdown("**주문 상세내역**")
-                render_full_detail(order, reveal=True)
+                render_full_detail(order, reveal=True, with_cs_memo=False)
             else:
                 st.caption("이 주문의 상세내역은 아직 앱에 수집되지 않았습니다. (해당 주문 단계에서 수집하면 보입니다)")
 
