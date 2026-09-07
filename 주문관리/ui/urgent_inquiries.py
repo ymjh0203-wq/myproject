@@ -174,39 +174,35 @@ def _unified_rows() -> list:
     for i in inquiry_repository.list_product_inquiries():
         # 쿠팡 문의 응답에는 상품명이 없고 ID만 들어있어서, 이미 수집해둔 주문
         # 데이터에서 그 ID로 상품명/옵션을 찾아 붙여줍니다.
+        # 쿠팡 상품조회로 상품명·'정확한 옵션명(vendorItemId 기준)'·링크정보를 확보(캐시).
+        # 문의의 vendorItemId로 조회하므로, 주문 매칭이 상품단위여도 옵션을 정확히 알 수 있습니다.
+        resolved = product_link_service.resolve_inquiry_product(
+            i.get("seller_product_id"), i.get("vendor_item_id"), i.get("market_account_id")
+        )
+        resolved_option = (resolved or {}).get("option_name") or ""
+
         product = inquiry_repository.find_product_info(
             i.get("seller_product_id"), i.get("vendor_item_id"), i.get("order_ids")
         )
         if product:
-            product_name = product["product_name"] or "-"
-            option_name = product["option_name"] or "-"
-            if product["matched_by"] == "상품":
-                # 상품 단위로만 맞춘 경우 옵션은 다른 옵션일 수 있어 표시하지 않습니다.
-                option_name = "(옵션 확인 불가)"
-        else:
-            # 주문에 없는 상품(일반 문의)이면 쿠팡 상품조회로 상품명/옵션명을 알아냅니다.
-            # (한 번 조회하면 캐시되어 다음부터는 API 없이 바로 표시됩니다 - 쿠팡 Wing처럼)
-            resolved = product_link_service.resolve_inquiry_product(
-                i.get("seller_product_id"), i.get("vendor_item_id"), i.get("market_account_id")
-            )
-            if resolved and resolved.get("product_name"):
-                product_name = resolved["product_name"]
-                option_name = resolved.get("option_name") or "-"
+            product_name = product["product_name"] or (resolved or {}).get("product_name") or "-"
+            if product["matched_by"] == "옵션" and product.get("option_name"):
+                option_name = product["option_name"]  # 주문에서 옵션까지 정확히 매칭됨
             else:
-                product_name = "(주문 내역에 없는 상품)"
-                option_name = "-"
+                # 상품 단위 매칭이라 주문상 옵션이 불확실 → 쿠팡 상품조회의 옵션명을 씁니다.
+                option_name = resolved_option or "(옵션 확인 불가)"
+        elif resolved and resolved.get("product_name"):
+            product_name = resolved["product_name"]
+            option_name = resolved_option or "-"
+        else:
+            product_name = "(주문 내역에 없는 상품)"
+            option_name = "-"
 
-        # 문의온 상품의 쿠팡 상품 페이지 링크(productId 있으면 정확, 없으면 vendorItemId로 임시).
+        # 문의온 상품의 쿠팡 상품 페이지 링크(위 resolve가 productId/itemId를 캐시에 채워둠).
         _vid = i.get("vendor_item_id")
         product_url = ""
         if _vid:
             _cached = product_link_repository.get(_vid)
-            if not (_cached and _cached.get("product_id")):
-                # 아직 productId를 모르면 상품조회로 한 번 알아내 캐시(다음부터 API 없이 바로).
-                product_link_service.resolve_inquiry_product(
-                    i.get("seller_product_id"), _vid, i.get("market_account_id")
-                )
-                _cached = product_link_repository.get(_vid)
             product_url = common.coupang_product_url(
                 _vid, (_cached or {}).get("product_id"), (_cached or {}).get("item_id")
             )
