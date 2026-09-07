@@ -1121,9 +1121,17 @@ def build_full_row(order: dict, row_no: int, reveal: bool = False) -> dict:
     remote_area = order.get("remote_area")
     remote_area_display = "-" if remote_area is None else ("예" if remote_area else "아니오")
 
+    # 주문상태 표시: 기본은 내부 작업상태(work_status). 단, '배송중' 단계는 쿠팡 원본상태
+    # (market_status)로 배송지시(DEPARTURE)/배송중(DELIVERING)을 구분해서 보여줍니다.
+    # (하위탭과 같은 기준. 쿠팡에서 상태가 바뀌면 수집 시 자동 반영)
+    _work_status_display = order["work_status"]
+    if order["work_status"] == models.WORK_STATUS_SHIPPING:
+        _ms = (order.get("market_status") or "").upper()
+        _work_status_display = "배송지시" if _ms == "DEPARTURE" else "배송중"
+
     _full_row = {
         "No": row_no,
-        "주문상태": order["work_status"],
+        "주문상태": _work_status_display,
         "퀵스타": "-",
         "쇼핑몰": MARKET_DISPLAY_NAME.get(order["market_name"], order["market_name"]),
         "쇼핑몰ID": "-",
