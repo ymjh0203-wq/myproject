@@ -1016,6 +1016,32 @@ def update_work_status(order_id: int, new_status: str, changed_by: str = "manual
     record_status_history(order_id, old_status, new_status, changed_by)
 
 
+def set_market_status(order_id: int, market_status: str) -> bool:
+    """
+    쿠팡 원본상태(market_status)만 최신값으로 갱신합니다. (work_status·이력은 안 건드림)
+    배송중 단계의 배송지시(DEPARTURE)/배송중(DELIVERING) 구분을 쿠팡 실제 상태와
+    맞추기 위해, 라이브 조회로 확인한 값을 그대로 저장할 때 씁니다.
+    실제로 값이 바뀌었으면 True를 돌려줍니다.
+    """
+    if not market_status:
+        return False
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            "SELECT market_status FROM orders WHERE id = ?", (order_id,)
+        ).fetchone()
+        if row is None or row["market_status"] == market_status:
+            return False
+        connection.execute(
+            "UPDATE orders SET market_status = ?, last_updated_at = ? WHERE id = ?",
+            (market_status, _now(), order_id),
+        )
+        connection.commit()
+        return True
+    finally:
+        connection.close()
+
+
 def update_shipping_invoice(order_id: int, delivery_company_code: str, invoice_number: str) -> None:
     """송장(택배사+운송장번호)을 저장하고, 작업 상태를 배송중으로 바꿉니다."""
     now = _now()

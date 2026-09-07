@@ -354,24 +354,25 @@ def reconcile_active_orders(period_from=None, period_to=None) -> dict:
 
 def advance_delivered_orders(progress=None) -> dict:
     """
-    배송중(work_status=배송중) 주문 중, 쿠팡에서 이미 배송완료(FINAL_DELIVERY)로
-    넘어간 건을 '배송완료' 단계로 전진시킵니다.
+    배송중(work_status=배송중) 주문을 쿠팡 '실제 상태'와 맞춥니다.
+      ① 배송완료(FINAL_DELIVERY)로 넘어간 건 → '배송완료' 단계로 전진.
+      ② 아직 배송중인 건 → 쿠팡 원본상태(배송지시=DEPARTURE / 배송중=DELIVERING)를
+         DB에 최신화. (배송중 화면의 하위탭 '배송지시/배송중'이 쿠팡과 정확히 일치하게 함)
 
-    ⚠️ 배송중 화면의 '수집하기'는 DEPARTURE/DELIVERING(배송지시·배송중)만 조회하므로,
-    배송완료된 주문은 그 조회에 안 나와 영원히 배송중에 갇힙니다. 이 함수가 그 갇힌
-    주문을 정리합니다.
+    ⚠️ 배송중 화면의 '수집하기'는 결제일시 기간으로만 조회해서, 오래된 주문은 상태가
+    바뀌어도 다시 안 잡혔습니다. 그래서 실제로는 배송중인데 DB엔 배송지시로 남는 문제가
+    있었습니다. 이 함수가 배송중 주문들의 주문일 범위(최대 120일)로 라이브 조회해 바로잡습니다.
 
-    - 화면의 결제일시 필터와 무관하게, '배송중 주문들의 실제 주문일 범위(최대 120일)'로
-      조회하므로 오래되어 갇혀 있던 주문도 빠짐없이 정리됩니다.
-    - '전진'만 합니다(뒤로 되돌리거나 임의로 종료하지 않음). 그래서 실수로 데이터를
-      잃을 위험이 없습니다.
+    - '전진'만 합니다(뒤로 되돌리거나 임의로 종료하지 않음). market_status는 라이브값으로
+      덮어써 항상 쿠팡과 일치시킵니다.
     - 계정 조회가 실패(504 등)하면 그 계정은 건드리지 않습니다.
 
-    반환: {status, scanned, advanced_count, error_message}
+    반환: {status, scanned, advanced_count, substatus_updated, error_message}
     """
     accounts = market_repository.list_market_accounts(platform=market_repository.PLATFORM_COUPANG)
     if not accounts:
-        return {"status": "success", "scanned": 0, "advanced_count": 0, "error_message": None}
+        return {"status": "success", "scanned": 0, "advanced_count": 0,
+                "substatus_updated": 0, "error_message": None}
 
     order_rank = {ws: i for i, ws in enumerate(models.WORK_STATUS_LIST)}
     delivered_rank = order_rank.get(models.WORK_STATUS_DELIVERED, -1)
@@ -384,6 +385,7 @@ def advance_delivered_orders(progress=None) -> dict:
 
     total_scanned = 0
     total_advanced = 0
+    total_substatus = 0
     errors = []
 
     for acc_i, account in enumerate(accounts):
@@ -402,20 +404,31 @@ def advance_delivered_orders(progress=None) -> dict:
 
         client = _client_for_account(account)
         try:
-            delivered = _fetch_statuses_with_retry(client, ["FINAL_DELIVERY"], fetch_from, fetch_to)
+            # 배송지시·배송중·배송완료를 함께 조회해서, 각 주문의 '현재 쿠팡 상태'를 확보합니다.
+            live = _fetch_statuses_with_retry(
+                client, ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY"], fetch_from, fetch_to
+            )
         except CoupangApiError as error:
             # 이 계정은 조회 실패 → 안전을 위해 건드리지 않습니다.
             errors.append(f"[{account['market_name']}] {error}")
             continue
 
-        delivered_boxes = {str(o["shipment_box_id"]) for o in delivered}
+        status_by_box = {str(o["shipment_box_id"]): (o.get("market_status") or "").upper()
+                         for o in live}
         for order in shipping:
-            if str(order["shipment_box_id"]) in delivered_boxes:
+            live_status = status_by_box.get(str(order["shipment_box_id"]))
+            if not live_status:
+                continue  # 조회 범위 밖(오래됨) → 오판 방지로 건드리지 않음
+            if live_status == "FINAL_DELIVERY":
                 if delivered_rank > order_rank.get(order["work_status"], -1):
                     order_repository.update_work_status(
                         order["id"], models.WORK_STATUS_DELIVERED, changed_by="auto-advance"
                     )
                     total_advanced += 1
+            else:
+                # 아직 배송중: 배송지시/배송중 원본상태를 쿠팡 실제값으로 최신화.
+                if order_repository.set_market_status(order["id"], live_status):
+                    total_substatus += 1
 
         if progress:
             try:
@@ -427,6 +440,7 @@ def advance_delivered_orders(progress=None) -> dict:
         "status": "partial" if errors else "success",
         "scanned": total_scanned,
         "advanced_count": total_advanced,
+        "substatus_updated": total_substatus,
         "error_message": " / ".join(errors) if errors else None,
     }
 
