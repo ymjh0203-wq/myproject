@@ -431,6 +431,60 @@ def advance_delivered_orders(progress=None) -> dict:
     }
 
 
+def advance_settled_orders(recognition_days: int = 45, progress=None) -> dict:
+    """쿠팡 '정산(매출인식) 내역'에 뜬 주문 = 배송완료+매출확정된 주문입니다. 그 주문이 앱에서
+    아직 활성(발송대기/배송중/배송완료)에 있으면 '구매확정'으로 전진시킵니다.
+
+    ★왜 필요한가: 업체직송(직접배송) 완료 주문 등은 쿠팡 '주문서 조회(ordersheets)'에는 안
+      나와서, FINAL_DELIVERY 기반 전진(advance_delivered)으로는 영영 배송중에 갇힙니다.
+      하지만 '정산 내역'에는 뜨므로, 그걸 근거로 '쿠팡 데이터대로' 완료 처리합니다(추측 아님).
+    - 전진만 합니다(뒤로 안 감). 정산에 없는 주문은 건드리지 않습니다.
+
+    반환: {status, advanced_count, error_message}
+    """
+    accounts = market_repository.list_market_accounts(platform=market_repository.PLATFORM_COUPANG)
+    if not accounts:
+        return {"status": "success", "advanced_count": 0, "error_message": None}
+
+    order_rank = {ws: i for i, ws in enumerate(models.WORK_STATUS_LIST)}
+    confirmed_rank = order_rank.get(models.WORK_STATUS_PURCHASE_CONFIRMED, -1)
+    active = [models.WORK_STATUS_READY_TO_SHIP, models.WORK_STATUS_SHIPPING, models.WORK_STATUS_DELIVERED]
+
+    rec_to = date.today() - timedelta(days=1)
+    rec_from = date.today() - timedelta(days=recognition_days)
+
+    total_advanced = 0
+    errors = []
+    for acc_i, account in enumerate(accounts):
+        try:
+            revenue = _client_for_account(account).fetch_revenue_history(rec_from, rec_to)
+        except Exception as error:  # noqa: BLE001
+            errors.append(f"[{account['market_name']}] 정산조회 실패: {error}")
+            continue
+        settled_ids = set(revenue.keys())
+        if not settled_ids:
+            continue
+        active_orders = order_repository.list_active_orders_for_account(account["id"], active)
+        for order in active_orders:
+            if str(order["market_order_id"]) in settled_ids and \
+                    confirmed_rank > order_rank.get(order["work_status"], -1):
+                order_repository.update_work_status(
+                    order["id"], models.WORK_STATUS_PURCHASE_CONFIRMED, changed_by="auto-settled"
+                )
+                total_advanced += 1
+        if progress:
+            try:
+                progress(acc_i + 1, len(accounts))
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {
+        "status": "partial" if errors else "success",
+        "advanced_count": total_advanced,
+        "error_message": " / ".join(errors) if errors else None,
+    }
+
+
 def close_returned_active_orders() -> dict:
     """활성(신규주문/발송대기/배송중) 주문 중 '반품·취소 완료'된 건을 주문종료로 정리합니다.
     (반품/취소가 끝났는데 앱엔 아직 배송중 등으로 남던 데이터 불일치를 없앱니다.)
