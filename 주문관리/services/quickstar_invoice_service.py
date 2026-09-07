@@ -54,6 +54,27 @@ def _extract_tracking(data: dict):
     return None, None
 
 
+# 경동택배(대형화물) 쿠팡 택배사코드. models.COURIER_CODES 기준 "KDEXP" = 경동택배.
+KDEXP_COURIER = "KDEXP"
+
+
+def _pick_kdexp_invoice(data: dict):
+    """
+    배대지 응답에서 '경동택배(대형화물)' 송장을 뽑습니다.
+    실측(GR2608197295661): 경동택배 송장은 data.largeInvoice 에 콤마로 여러 건 들어옵니다.
+      예) largeInvoice = "6826090003210,6826090005810"  (boxCnt 중 대형박스들)
+    있으면 (KDEXP, 첫 송장번호)를, 없으면 (None, None)을 돌려줍니다.
+      ※ 사용자 규칙: 배송중 송장 '변경'은 무조건 경동택배 → CJ가 있어도 경동을 우선합니다.
+      ※ 여러 건이면 대표로 '첫 번째' 번호를 씁니다(한 주문=한 송장. 필요 시 표에서 수정 가능).
+    """
+    large = str(data.get("largeInvoice") or "").strip()
+    if large:
+        first = large.split(",")[0].strip()
+        if first:
+            return KDEXP_COURIER, first
+    return None, None
+
+
 def _progress(progress, i, orders):
     if progress:
         try:
@@ -144,7 +165,11 @@ def scan_invoice_changes(orders: list, progress=None) -> dict:
         with_gr += 1
         try:
             data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
-            code, new_inv = _extract_tracking(data)
+            # ★변경 대상은 '무조건 경동택배'(대형화물, largeInvoice) 우선. 경동 송장이 있으면
+            #   그걸로 바꾸고, 없으면 기존처럼 CJ 가송장(invoice) 변경분을 봅니다.
+            code, new_inv = _pick_kdexp_invoice(data)
+            if not new_inv:
+                code, new_inv = _extract_tracking(data)
         except Exception as e:  # noqa: BLE001
             errors += 1
             if len(error_samples) < 6:
