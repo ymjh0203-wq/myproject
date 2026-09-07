@@ -1012,7 +1012,7 @@ def _bulk_todo(name: str, selected: list) -> None:
 
 
 def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None,
-                               primary_help: str = None) -> bool:
+                               primary_help: str = None, invoice_button: bool = False) -> bool:
     """
     샵마인식 액션 버튼 바(신규주문에서 쓰던 것)를 공용화한 것입니다. 각 단계 화면이
     같은 모양으로 씁니다.
@@ -1038,6 +1038,13 @@ def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None
         _extra = st.button("➕ 추가기능", key=f"{key}_bar_extra")
         _tpl = st.button("📑 엑셀양식설정", key=f"{key}_bar_tplset", help="엑셀 양식 만들기 화면으로 이동합니다.")
         _excel = st.button("📥 엑셀파일생성", key=f"{key}_bar_excelgen", type="primary")
+        if invoice_button:
+            # 배송중 화면 전용: 표에서 택배사/송장번호를 고친 뒤 이 버튼으로 팝업을 열어
+            # 여러 건을 한 번에 쿠팡에 반영합니다.
+            if st.button("🚚 운송장 변경", key=f"{key}_bar_invoice", type="primary",
+                         help="표에서 택배사·송장번호를 고친 뒤 눌러 한 번에 반영합니다."):
+                st.session_state[f"{key}_invoice_dialog"] = True
+                st.rerun()
     if _tpl:
         st.session_state["current_view"] = "엑셀 양식"
         st.query_params["view"] = "엑셀 양식"
