@@ -18,14 +18,14 @@ import streamlit as st
 
 import models
 from integrations import quickstar_automation
-from repositories import order_repository
+from repositories import order_repository, settings_repository
 from services import customs_service, gr_backfill_service, quickstar_invoice_service, sync_service
 from ui import common, settings
 
 
-def _collect_invoice_pending() -> list:
+def _collect_invoice_pending(key: str = "shipping") -> list:
     """
-    배송중 표에서 사용자가 고친 택배사·송장번호(session_state['shipping_edited_records'])를
+    배송중 표에서 사용자가 고친 택배사·송장번호(session_state[f'{key}_edited_records'])를
     현재 등록값과 비교해, '실제로 바뀐' 건만 골라 돌려줍니다.
     반환: [(order, 택배사코드, 송장번호, 표시용_택배사명), ...]
     """
@@ -44,7 +44,7 @@ def _collect_invoice_pending() -> list:
         str(o["market_order_id"]): o
         for o in order_repository.list_orders_by_work_status(models.WORK_STATUS_SHIPPING)
     }
-    records = st.session_state.get("shipping_edited_records", []) or []
+    records = st.session_state.get(f"{key}_edited_records", []) or []
     pending = []
     for r in records:
         o = all_shipping.get(str(r.get("주문번호")))
@@ -65,12 +65,12 @@ def _collect_invoice_pending() -> list:
 
 
 @st.dialog("🚚 운송장(송장) 변경")
-def _invoice_change_dialog() -> None:
+def _invoice_change_dialog(key: str = "shipping") -> None:
     """
     표에서 고친 택배사·송장번호를 모아 보여주고, 버튼 한 번으로 여러 건을 쿠팡에 실제
     반영합니다. (배송중 화면 상단 '🚚 운송장 변경' 버튼으로 열립니다.)
     """
-    pending = _collect_invoice_pending()
+    pending = _collect_invoice_pending(key)
     if not pending:
         st.info(
             "변경할 송장이 없습니다.\n\n"
@@ -91,7 +91,7 @@ def _invoice_change_dialog() -> None:
     c_apply, c_clear = st.columns([2, 1])
     with c_apply:
         if st.button(f"✏️ {len(pending)}건 일괄 송장 변경 (쿠팡 실제 반영)",
-                     type="primary", width="stretch", key="shipping_bulk_invoice_edit"):
+                     type="primary", width="stretch", key=f"{key}_bulk_invoice_edit"):
             done_ids, fails = [], []
             bar = st.progress(0.0)
             for i, (o, code, inv, _cn) in enumerate(pending):
@@ -109,16 +109,75 @@ def _invoice_change_dialog() -> None:
                 st.success(f"{len(done_ids)}건 송장 변경 완료")
             if fails:
                 st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails[:12]))
-            _records = st.session_state.get("shipping_edited_records", []) or []
-            st.session_state["shipping_edited_records"] = [
+            _records = st.session_state.get(f"{key}_edited_records", []) or []
+            st.session_state[f"{key}_edited_records"] = [
                 r for r in _records if str(r.get("주문번호")) not in set(done_ids)
             ]
             if done_ids and not fails:
                 st.rerun()
     with c_clear:
-        if st.button("대기 비우기", width="stretch", key="shipping_clear_edits"):
-            st.session_state["shipping_edited_records"] = []
+        if st.button("대기 비우기", width="stretch", key=f"{key}_clear_edits"):
+            st.session_state[f"{key}_edited_records"] = []
             st.rerun()
+
+
+def _migrate_shipping_view_settings() -> None:
+    """
+    기존 '배송중'(key='shipping') 표 설정(표시항목·정렬·너비)을 새 하위탭
+    (배송지시=shipping_dep / 배송중=shipping_del) 키로 1회 복사합니다. 사용자가
+    맞춰둔 표 레이아웃을 하위탭 분리 후에도 그대로 잇기 위함입니다.
+    """
+    for suffix in ("shipping_dep", "shipping_del"):
+        for prefix in ("column_order", "sort_col", "sort_dir", "table_width"):
+            src = settings_repository.get_setting(f"{prefix}:shipping")
+            if src is not None and settings_repository.get_setting(f"{prefix}:{suffix}") is None:
+                settings_repository.set_setting(f"{prefix}:{suffix}", src)
+
+
+def _render_shipping_list(sub_orders: list, sub_rows: list, key: str, reveal: bool,
+                          empty_hint: str) -> None:
+    """
+    배송지시/배송중 하위탭 각각의 목록(버튼바 + 표 + 송장변경 + 합계)을 그립니다.
+    같은 코드를 두 탭이 key만 달리해서 재사용합니다. (선택·편집·표시설정 상태가 탭별로 분리됨)
+    """
+    if not sub_orders:
+        st.info(empty_hint)
+        return
+
+    # 버튼바(맨 오른쪽 '🚚 운송장 변경' 포함)
+    common.render_shopmine_action_bar(key, sub_orders, invoice_button=True)
+
+    def _detail(order):
+        common.render_full_detail(order, reveal)
+
+    # 송장 변경 안내 + 팝업 열기
+    _pending_cnt = len(_collect_invoice_pending(key))
+    if _pending_cnt:
+        st.info(
+            f"✏️ 송장 변경 **수정 대기 {_pending_cnt}건** — 위 **‘🚚 운송장 변경’** 버튼을 누르면 "
+            "한 번에 반영합니다.",
+            icon="🚚",
+        )
+    else:
+        st.caption(
+            "✏️ **송장(운송장) 변경**: 표에서 **택배사·송장번호 칸을 직접 고친 뒤**, 위 "
+            "**‘🚚 운송장 변경’** 버튼을 누르면 여러 건을 한 번에 반영합니다."
+        )
+    if st.session_state.pop(f"{key}_invoice_dialog", False):
+        _invoice_change_dialog(key)
+
+    _courier_names = list(dict.fromkeys(models.COURIER_CODES.values()))
+    _ship_editable = {
+        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_names}},
+        "송장번호": {"cellEditor": "agTextCellEditor"},
+    }
+    common.render_full_table(
+        sub_rows, sub_orders, key=key,
+        detail_renderer=_detail,
+        multi_select=True,
+        editable=_ship_editable,
+    )
+    common.render_order_summary_bar(sub_orders)
 
 
 @st.dialog("관부가세 결재통보 조회 & 자동문자")
@@ -379,46 +438,34 @@ def render() -> None:
         st.info("검색 결과가 없습니다.")
         return
 
-    filtered_orders = [pair[0] for pair in filtered_pairs]
-    filtered_rows = [pair[1] for pair in filtered_pairs]
+    # ---- 쿠팡 '주문상태'로 배송지시 / 배송중 하위탭 분리 ----
+    #   work_status는 그대로 '배송중' 하나(안전, DB 이동 없음). 화면만 쿠팡 원본상태
+    #   (market_status)로 가릅니다. 쿠팡에서 배송지시(DEPARTURE)→배송중(DELIVERING)으로
+    #   바뀌면 '수집하기' 때 market_status가 갱신되어 자동으로 탭이 옮겨집니다.
+    #   배송지시 = DEPARTURE, 배송중 = 그 외(DELIVERING 등) — 어느 탭에서도 안 빠지게 처리.
+    _migrate_shipping_view_settings()
 
-    # 샵마인식 액션 버튼 바. 배송중은 확인/처리 주 버튼이 없습니다(유틸 버튼만).
-    #   맨 오른쪽에 '🚚 운송장 변경' 버튼을 넣어, 표에서 고친 송장들을 팝업에서 한 번에 반영합니다.
-    common.render_shopmine_action_bar("shipping", filtered_orders, invoice_button=True)
+    def _is_departure(o):
+        return (o.get("market_status") or "").upper() == "DEPARTURE"
 
-    # 상세 = 기본 상세내역만.
-    def _shipping_detail(order):
-        common.render_full_detail(order, reveal)
+    dep_pairs = [(o, r) for o, r in filtered_pairs if _is_departure(o)]
+    del_pairs = [(o, r) for o, r in filtered_pairs if not _is_departure(o)]
 
-    # ---- ✏️ 송장(운송장) 변경 안내 + 팝업 열기 ----
-    #   표에서 택배사·송장번호 칸을 고치면 '수정 대기'로 쌓이고, 위 버튼(또는 아래 대기 배지)을
-    #   누르면 팝업에서 여러 건을 한 번에 쿠팡에 반영합니다.
-    _pending_cnt = len(_collect_invoice_pending())
-    if _pending_cnt:
-        st.info(
-            f"✏️ 송장 변경 **수정 대기 {_pending_cnt}건** — 위 **‘🚚 운송장 변경’** 버튼을 누르면 "
-            "한 번에 반영합니다.",
-            icon="🚚",
+    tab_dep, tab_del = st.tabs([
+        f"🚚 배송지시 ({len(dep_pairs)})",
+        f"📦 배송중 ({len(del_pairs)})",
+    ])
+    with tab_dep:
+        st.caption("쿠팡 주문상태가 **배송지시**(발송 직후, 아직 집화 전)인 주문입니다.")
+        _render_shipping_list(
+            [p[0] for p in dep_pairs], [p[1] for p in dep_pairs],
+            key="shipping_dep", reveal=reveal,
+            empty_hint="배송지시 상태인 주문이 없습니다.",
         )
-    else:
-        st.caption(
-            "✏️ **송장(운송장) 변경**: 표에서 **택배사·송장번호 칸을 직접 고친 뒤**, 위 "
-            "**‘🚚 운송장 변경’** 버튼을 누르면 여러 건을 한 번에 반영합니다."
+    with tab_del:
+        st.caption("쿠팡 주문상태가 **배송중**(집화·이동 중)인 주문입니다.")
+        _render_shipping_list(
+            [p[0] for p in del_pairs], [p[1] for p in del_pairs],
+            key="shipping_del", reveal=reveal,
+            empty_hint="배송중 상태인 주문이 없습니다.",
         )
-    if st.session_state.pop("shipping_invoice_dialog", False):
-        _invoice_change_dialog()
-
-    _courier_names = list(dict.fromkeys(models.COURIER_CODES.values()))  # 택배사명 목록(드롭다운용)
-    _ship_editable = {
-        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_names}},
-        "송장번호": {"cellEditor": "agTextCellEditor"},
-    }
-    common.render_full_table(
-        filtered_rows, filtered_orders, key="shipping",
-        detail_renderer=_shipping_detail,
-        multi_select=True,
-        editable=_ship_editable,
-    )
-
-    # 표 아래 합계 요약 바(총 건수·결제·수수료·정산) — 신규주문과 동일.
-    common.render_order_summary_bar(filtered_orders)
