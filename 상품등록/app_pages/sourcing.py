@@ -1,230 +1,180 @@
-# ============================================================
-# app_pages/sourcing.py  —  벤치마킹 소싱 페이지
-# ------------------------------------------------------------
-# 기준 상품(URL/이미지) → 대표이미지 → 타오바오 이미지검색 →
-# 유사 후보 N개 → 각 추출 → 카드로 보기 → 선택 저장(products_raw)
-#
-# 검색 시 "타오바오 크롬 창"이 따로 뜹니다. 로그인/캡차가 보이면 그 창에서
-# 직접 처리하세요. 결과가 뜨면 이 화면이 자동으로 이어받습니다.
-# ============================================================
+"""벤치마킹 소싱 페이지 — 1단계: 국내 기준상품 분석과 확인."""
 
-import os
-import random
-import time
-import traceback
+from __future__ import annotations
+
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import streamlit as st
 
-import seed as seed_mod
-from collector.taobao import CaptchaDetected, collect_taobao
-from collector.taobao_image_search import image_search
-
-SEEDS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "seeds")
+from benchmark_analyzer import BenchmarkAnalysisError, analyze_benchmark_product
 
 
-# 환경 진단: 이 페이지가 실제로 어떤 파이썬/플레이라이트/브라우저 경로를 쓰는지 기록
-try:
-    import sys as _sys
-    import playwright as _pw
-    import importlib.metadata as _md
-    os.makedirs(SEEDS_DIR, exist_ok=True)
-    _mp = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
-    with open(os.path.join(SEEDS_DIR, "env_diag.txt"), "w", encoding="utf-8") as _f:
-        _f.write(f"sys.executable = {_sys.executable}\n")
-        _f.write(f"sys.prefix     = {_sys.prefix}\n")
-        _f.write(f"playwright     = {_pw.__file__}\n")
-        _f.write(f"pw.version     = {_md.version('playwright')}\n")
-        _f.write(f"LOCALAPPDATA   = {os.environ.get('LOCALAPPDATA')}\n")
-        _f.write(f"PLAYWRIGHT_BROWSERS_PATH = {os.environ.get('PLAYWRIGHT_BROWSERS_PATH','(none)')}\n")
-        _f.write(f"ms-playwright  = {sorted(os.listdir(_mp)) if os.path.isdir(_mp) else 'MISSING'}\n")
-        _chrome = os.path.join(_mp, "chromium-1234", "chrome-win64", "chrome.exe")
-        _f.write(f"chrome.exe 1234 exists = {os.path.exists(_chrome)}\n")
-except Exception:
-    pass
+def run_in_worker(function, *args, **kwargs):
+    """Playwright 동기 API를 Streamlit 실행 스레드와 분리한다."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(function, *args, **kwargs).result()
 
 
-def log_error(where: str, err: Exception) -> None:
-    """오류 전체 내용을 seeds/last_error.txt 에 남깁니다(원인 파악용)."""
-    try:
-        os.makedirs(SEEDS_DIR, exist_ok=True)
-        with open(os.path.join(SEEDS_DIR, "last_error.txt"), "w", encoding="utf-8") as f:
-            f.write(f"[{where}] {type(err).__name__}: {err}\n\n")
-            f.write(traceback.format_exc())
-    except Exception:
-        pass
+def keyword_candidates(title: str) -> list[str]:
+    """검수용 키워드 후보를 보수적으로 추출한다. 최종 분류는 사용자가 한다."""
+    stopwords = {
+        "무료배송", "당일배송", "오늘출발", "국내배송", "해외배송", "정품", "특가",
+        "추천", "인기", "신상", "할인", "증정", "세일", "공식", "스토어",
+    }
+    tokens = re.findall(r"[가-힣A-Za-z0-9]+", title or "")
+    result = []
+    for token in tokens:
+        if len(token) < 2 or token in stopwords or token.isdigit() or token in result:
+            continue
+        result.append(token)
+    return result[:20]
 
 
-def run_in_thread(fn, *args, **kwargs):
-    """Playwright(sync)를 Streamlit 스레드가 아닌 '새 스레드'에서 실행."""
-    with ThreadPoolExecutor(max_workers=1) as ex:
-        return ex.submit(fn, *args, **kwargs).result()
-
-
-def save_uploaded_image(uploaded) -> str:
-    """업로드한 이미지를 seeds/ 폴더에 저장하고 경로를 돌려줍니다."""
-    os.makedirs(SEEDS_DIR, exist_ok=True)
-    path = os.path.join(SEEDS_DIR, "upload_" + uploaded.name)
-    with open(path, "wb") as f:
-        f.write(uploaded.getbuffer())
-    return path
-
-
-# ---- 세션 상태 초기화 (한 곳에서) ----
-if "seed" not in st.session_state:
-    st.session_state.seed = None
-if "results" not in st.session_state:
-    st.session_state.results = None
-if "saved_msg" not in st.session_state:
-    st.session_state.saved_msg = None
-
+st.session_state.setdefault("benchmark_product", None)
+st.session_state.setdefault("benchmark_confirmed", False)
 
 st.title("벤치마킹 소싱")
-st.caption("잘 팔리는 기준 상품의 이미지로 타오바오에서 유사 상품을 찾아옵니다.")
+st.caption("국내에서 잘 팔리는 상품 URL을 분석한 뒤 타오바오 공급상품 후보를 찾습니다.")
 
-with st.form("search_form"):
-    st.markdown("**기준 상품 입력** — URL 또는 이미지 중 하나")
-    url = st.text_input(
-        "한국 마켓 상품 URL",
-        placeholder="https://smartstore.naver.com/... (가격비교 catalog 주소는 봇차단됨)",
+with st.container(border=True):
+    st.subheader("1. 기준상품 분석")
+    st.write("스마트스토어·네이버쇼핑·쿠팡 상품 주소를 넣어 주세요.")
+
+    with st.form("benchmark_url_form", border=False):
+        product_url = st.text_input(
+            "국내 상품 URL",
+            placeholder="https://smartstore.naver.com/.../products/...",
+            key="benchmark_url",
+        )
+        wait_seconds = st.slider(
+            "보안확인 대기시간",
+            min_value=60,
+            max_value=600,
+            value=300,
+            step=30,
+            format="%d초",
+            help="보안확인이 뜨면 열린 Chrome 창에서 직접 완료하세요. 창은 이 시간 동안 유지됩니다.",
+        )
+        analyze_clicked = st.form_submit_button(
+            "기준상품 분석",
+            type="primary",
+            icon=":material/manage_search:",
+        )
+
+    st.info(
+        "분석 중 Chrome 창이 열립니다. 보안확인이 나오면 그 창에서 처리해 주세요. "
+        "인증 뒤 상품명과 대표이미지가 확인될 때까지 창을 닫지 않습니다.",
+        icon=":material/info:",
     )
-    uploaded = st.file_uploader("또는 상품 이미지 업로드", type=["jpg", "jpeg", "png", "webp"])
-    num = st.slider("찾을 후보 개수", min_value=1, max_value=10, value=3)
-    wait = st.slider(
-        "결과 대기 시간(초)", min_value=30, max_value=180, value=90,
-        help="캡차를 직접 푸는 시간이 필요하면 넉넉히 잡으세요.",
-    )
-    submitted = st.form_submit_button("유사 상품 찾기", type="primary", icon=":material/search:")
 
-st.info(
-    "검색을 누르면 타오바오 크롬 창이 따로 뜹니다. 로그인/캡차가 보이면 그 창에서 "
-    "직접 처리하세요 — 결과가 뜨면 이 화면이 자동으로 이어받습니다.",
-    icon=":material/info:",
-)
-
-if submitted:
-    if not url and uploaded is None:
-        st.warning("상품 URL을 입력하거나 이미지를 업로드해주세요.")
-        st.stop()
-
-    st.session_state.results = None
-    st.session_state.saved_msg = None
-
-    with st.status("소싱 진행 중...", expanded=True) as status:
-        try:
-            if uploaded is not None:
-                st.write("업로드한 이미지를 기준으로 사용합니다.")
-                seed = seed_mod.image_from_file(save_uploaded_image(uploaded))
-            else:
-                st.write("상품 URL에서 대표이미지를 추출하는 중...")
-                seed = run_in_thread(seed_mod.image_from_url, url)
-            st.session_state.seed = seed
-
-            st.write("타오바오 이미지검색 중... (뜬 창에서 로그인/캡차 필요하면 처리)")
-            candidates = run_in_thread(
-                image_search, seed["seed_image_path"], num, None, False, wait
+if analyze_clicked:
+    st.session_state.benchmark_product = None
+    st.session_state.benchmark_confirmed = False
+    try:
+        with st.status("기준상품을 분석하고 있습니다...", expanded=True) as status:
+            st.write("국내 상품 페이지를 여는 중입니다.")
+            st.write("보안확인이 표시되면 열린 Chrome 창에서 인증해 주세요.")
+            product = run_in_worker(
+                analyze_benchmark_product,
+                product_url,
+                wait_seconds=wait_seconds,
             )
-            if not candidates:
-                status.update(label="후보를 찾지 못했습니다.", state="error")
-                st.stop()
-            st.write(f"후보 {len(candidates)}개 발견 — 상세 정보 추출 중...")
+            st.session_state.benchmark_product = product
+            status.update(label="기준상품 분석 완료", state="complete", expanded=False)
+    except (ValueError, BenchmarkAnalysisError) as error:
+        st.error(str(error), icon=":material/report:")
+    except Exception as error:
+        st.error(
+            f"분석 중 예상하지 못한 오류가 발생했습니다: {error}",
+            icon=":material/report:",
+        )
 
-            results = []
-            for rank, cand in enumerate(candidates, start=1):
-                if rank > 1:
-                    # 계정 동결 방지: 상품 사이에 넉넉히 쉼(사람처럼)
-                    wait_s = random.uniform(8, 18)
-                    st.write(f"  (차단 방지 대기 {wait_s:.0f}초...)")
-                    time.sleep(wait_s)
-                st.write(f"  {rank}번 후보 추출 중...")
-                try:
-                    data = run_in_thread(collect_taobao, cand)
-                    data["_match_rank"] = rank
-                    results.append(data)
-                except Exception as e:
-                    st.write(f"  {rank}번 후보 추출 실패: {e}")
-            st.session_state.results = results
-            status.update(label=f"완료 — {len(results)}개 후보 추출", state="complete")
-        except CaptchaDetected as e:
-            log_error("captcha", e)
-            status.update(label="캡차/차단으로 중단", state="error")
-            st.error(f"{e}", icon=":material/report:")
-            st.stop()
-        except Exception as e:
-            log_error("sourcing", e)
-            status.update(label="오류로 중단", state="error")
-            st.error(f"진행 중 오류: {e}", icon=":material/report:")
-            st.stop()
+product = st.session_state.benchmark_product
+if product:
+    with st.container(border=True):
+        st.subheader("2. 기준상품 확인")
+        st.caption("잘못 추출된 값은 수정하고, 타오바오 검색에 사용할 키워드를 선택하세요.")
 
+        image_col, info_col = st.columns([1, 2], vertical_alignment="top")
+        with image_col:
+            if product.get("image_url"):
+                st.image(product["image_url"], caption="추출된 대표이미지", width="stretch")
+            else:
+                st.warning("대표이미지를 확인하지 못했습니다.")
 
-# ---- 결과 표시 ----
-seed = st.session_state.seed
-results = st.session_state.results
-
-if seed and results is not None:
-    st.divider()
-    left, right = st.columns([1, 3])
-    with left:
-        st.markdown("**기준 상품(씨앗)**")
-        if seed.get("seed_image_path") and os.path.exists(seed["seed_image_path"]):
-            st.image(seed["seed_image_path"], width="stretch")
-        st.caption(seed.get("seed_ref", ""))
-    with right:
-        st.markdown(f"**찾은 유사 상품 {len(results)}개**")
-        if not results:
-            st.warning("추출된 후보가 없습니다. 대기 시간을 늘리거나 다른 이미지를 써보세요.")
-
-        selected = []
-        cols = st.columns(min(len(results), 3)) if results else []
-        for i, data in enumerate(results):
-            with cols[i % len(cols)]:
-                with st.container(border=True):
-                    imgs = data.get("image_urls") or []
-                    if imgs:
-                        st.image(imgs[0], width="stretch")
-                    st.markdown(f"**{data.get('title_original') or '(제목 없음)'}**")
-                    price = data.get("price_original")
-                    st.caption(f"가격(CNY): {price if price is not None else '—'}")
-                    if data.get("shop_name"):
-                        st.caption(f"판매점: {data['shop_name']}")
-                    st.link_button("타오바오에서 열기", data["source_url"], icon=":material/open_in_new:")
-                    pick = st.checkbox("채택", key=f"pick_{i}", value=True)
-                    if pick:
-                        selected.append(data)
-
-        if results:
-            st.divider()
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                do_save = st.button(
-                    "선택 항목 저장", type="primary", icon=":material/save:",
-                    disabled=(len(selected) == 0),
+        with info_col:
+            candidates = keyword_candidates(product.get("title", ""))
+            with st.form("benchmark_confirm_form", border=False):
+                edited_title = st.text_area(
+                    "경쟁상품명",
+                    value=product.get("title", ""),
+                    height=90,
                 )
-            with c2:
-                st.caption(
-                    f"{len(selected)}개 선택됨 · 저장하려면 .env의 DATABASE_URL과 "
-                    "적용된 표(001·002)가 필요합니다."
+                edited_image = st.text_input(
+                    "대표이미지 URL",
+                    value=product.get("image_url", ""),
+                )
+                c1, c2 = st.columns(2)
+                edited_price = c1.number_input(
+                    "국내 판매가",
+                    min_value=0,
+                    value=int(product.get("price_krw") or 0),
+                    step=100,
+                    format="%d",
+                )
+                edited_shop = c2.text_input("판매점", value=product.get("shop_name", ""))
+                main_keyword = st.selectbox(
+                    "메인 키워드",
+                    options=[""] + candidates,
+                    help="타오바오 키워드검색과 상품명 가공의 기준입니다.",
+                )
+                sub_keywords = st.multiselect(
+                    "서브 키워드",
+                    options=[word for word in candidates if word != main_keyword],
+                )
+                confirm_clicked = st.form_submit_button(
+                    "기준상품 확정",
+                    type="primary",
+                    icon=":material/check_circle:",
                 )
 
-            if do_save:
-                try:
-                    from db import (get_conn, insert_benchmark_seed, link_to_seed,
-                                    upsert_product_raw)
-                    conn = get_conn()
-                    try:
-                        seed_id = insert_benchmark_seed(conn, seed)
-                        for data in selected:
-                            rank = data.get("_match_rank")
-                            clean = {k: v for k, v in data.items() if not k.startswith("_")}
-                            pid = upsert_product_raw(conn, clean)
-                            link_to_seed(conn, pid, seed_id, rank)
-                        st.session_state.saved_msg = (
-                            f"씨앗 #{seed_id} 기준으로 {len(selected)}개를 products_raw에 저장했습니다."
-                        )
-                    finally:
-                        conn.close()
-                except Exception as e:
-                    st.error(f"저장 실패: {e}", icon=":material/report:")
+            st.caption(
+                f"출처: {product.get('marketplace', '-')} · "
+                f"리뷰 신호: {product.get('review_count') or '확인 안 됨'}"
+            )
 
-if st.session_state.saved_msg:
-    st.success(st.session_state.saved_msg, icon=":material/check_circle:")
+        if confirm_clicked:
+            product.update(
+                {
+                    "title": edited_title.strip(),
+                    "image_url": edited_image.strip(),
+                    "price_krw": int(edited_price),
+                    "shop_name": edited_shop.strip(),
+                    "main_keyword": main_keyword,
+                    "sub_keywords": sub_keywords,
+                }
+            )
+            if not product["title"] or not product["image_url"]:
+                st.error("상품명과 대표이미지는 반드시 확인해 주세요.")
+            elif not main_keyword:
+                st.error("타오바오 검색에 사용할 메인 키워드를 선택해 주세요.")
+            else:
+                st.session_state.benchmark_product = product
+                st.session_state.benchmark_confirmed = True
+                st.success("기준상품을 확정했습니다.", icon=":material/check_circle:")
+
+if st.session_state.benchmark_confirmed:
+    with st.container(border=True):
+        st.subheader("3. 타오바오 후보 찾기")
+        st.success("기준상품 분석 단계가 준비됐습니다.", icon=":material/task_alt:")
+        st.write(
+            "다음 단계에서 이미지검색과 중국어 키워드검색을 함께 실행하고, "
+            "후보를 비교해 상위 상품을 추천합니다."
+        )
+        st.button(
+            "타오바오 후보 찾기",
+            icon=":material/image_search:",
+            disabled=True,
+            help="국내 기준상품 분석을 실제 URL로 검증한 뒤 연결합니다.",
+        )

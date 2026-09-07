@@ -6,3 +6,4 @@ __pycache__/
 seeds/
 data/
 .naver_profile/
+.benchmark_profile/
