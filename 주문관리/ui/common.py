@@ -998,19 +998,6 @@ def replace_rules_dialog() -> None:
             st.rerun()
 
 
-def _bulk_todo(name: str, selected: list) -> None:
-    """
-    아직 기능 연결 안 한 샵마인식 버튼(주문서인쇄/작업상태지정/보류처리 등)을 눌렀을 때
-    안내합니다. 이 버튼들은 나중에 '선택한 주문 일괄처리'로 연결할 예정이라, 지금은
-    선택 건수를 함께 안내해 둡니다.
-    """
-    n = len(selected or [])
-    if n:
-        st.toast(f"'{name}'은(는) 곧 선택한 {n}건 일괄처리로 연결할 예정입니다.", icon="🛠")
-    else:
-        st.toast(f"'{name}'은(는) 곧 일괄처리 기능을 연결할 예정입니다. (표에서 주문을 먼저 선택하세요)", icon="🛠")
-
-
 def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None,
                                primary_help: str = None, invoice_button: bool = False) -> bool:
     """
@@ -1031,11 +1018,6 @@ def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None
         _stat = st.button("📊 통계", key=f"{key}_bar_stat")
         _disp = st.button("🗂 표시항목설정", key=f"{key}_bar_disp")
         _swap = st.button("🔧 바꾸기설정", key=f"{key}_bar_swap")
-        _print = st.button("🖨 주문서인쇄", key=f"{key}_bar_print")
-        _work = st.button("🏷 작업상태지정", key=f"{key}_bar_work")
-        _hold = st.button("⏸ 보류처리", key=f"{key}_bar_hold")
-        _unhold = st.button("▶ 보류해제", key=f"{key}_bar_unhold")
-        _extra = st.button("➕ 추가기능", key=f"{key}_bar_extra")
         _tpl = st.button("📑 엑셀양식설정", key=f"{key}_bar_tplset", help="엑셀 양식 만들기 화면으로 이동합니다.")
         _excel = st.button("📥 엑셀파일생성", key=f"{key}_bar_excelgen", type="primary")
         if invoice_button:
@@ -1057,12 +1039,6 @@ def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None
         stats_dialog(orders)
     if _excel:
         excel_export_dialog(orders, selected, key=key)
-    for _clicked, _name in [
-        (_print, "주문서인쇄"), (_work, "작업상태지정"),
-        (_hold, "보류처리"), (_unhold, "보류해제"), (_extra, "추가기능"),
-    ]:
-        if _clicked:
-            _bulk_todo(_name, selected)
     return primary_clicked
 
 
