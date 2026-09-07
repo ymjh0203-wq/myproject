@@ -14,7 +14,7 @@
 import pandas as pd
 import streamlit as st
 
-from repositories import inquiry_repository, order_repository
+from repositories import inquiry_repository, order_repository, product_link_repository
 from services import claims_sync_service, product_link_service
 from ui import common, settings
 
@@ -106,6 +106,14 @@ def _render_list_with_detail(rows: list, key: str) -> None:
         st.table(detail_df)
 
         if detail.get("문의종류") == "상품문의":
+            # 문의온 상품의 쿠팡 상품 페이지를 크롬으로 바로 열 수 있게 합니다.
+            _purl = detail.get("_product_url")
+            if _purl:
+                if st.button("🔗 크롬으로 이 상품 페이지 열기", key=f"inq_prod_open_{detail.get('_row_id')}"):
+                    if not common.open_in_chrome(_purl):
+                        st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
+                        st.code(_purl)
+                st.caption(f"상품 링크: {_purl}")
             _render_answer_form(detail)
         else:
             st.caption(
@@ -188,6 +196,21 @@ def _unified_rows() -> list:
                 product_name = "(주문 내역에 없는 상품)"
                 option_name = "-"
 
+        # 문의온 상품의 쿠팡 상품 페이지 링크(productId 있으면 정확, 없으면 vendorItemId로 임시).
+        _vid = i.get("vendor_item_id")
+        product_url = ""
+        if _vid:
+            _cached = product_link_repository.get(_vid)
+            if not (_cached and _cached.get("product_id")):
+                # 아직 productId를 모르면 상품조회로 한 번 알아내 캐시(다음부터 API 없이 바로).
+                product_link_service.resolve_inquiry_product(
+                    i.get("seller_product_id"), _vid, i.get("market_account_id")
+                )
+                _cached = product_link_repository.get(_vid)
+            product_url = common.coupang_product_url(
+                _vid, (_cached or {}).get("product_id"), (_cached or {}).get("item_id")
+            )
+
         rows.append(
             {
                 "문의종류": "상품문의",
@@ -205,6 +228,7 @@ def _unified_rows() -> list:
                 "_row_id": i["id"],
                 "_answered": bool(i["answered"]),
                 "_answer_content": i.get("answer_content") or "",
+                "_product_url": product_url,
             }
         )
     for i in inquiry_repository.list_call_center_inquiries():
