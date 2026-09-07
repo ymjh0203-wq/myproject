@@ -1606,9 +1606,21 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
             if _recs:
                 _prev = st.session_state.get(f"{key}_edited_records", []) or []
                 _by_moid = {str(r.get("주문번호")): r for r in _prev}
+                _edit_cols = list(editable.keys())
+                _changed = False
                 for _r in _recs:
-                    _by_moid[str(_r.get("주문번호"))] = _r
+                    _mo = str(_r.get("주문번호"))
+                    _old = _by_moid.get(_mo)
+                    # 이미 저장된 값과 편집컬럼이 달라지면 '방금 사용자가 고침'으로 봅니다.
+                    if _old is not None and any(str(_old.get(c)) != str(_r.get(c)) for c in _edit_cols):
+                        _changed = True
+                    _by_moid[_mo] = _r
                 st.session_state[f"{key}_edited_records"] = list(_by_moid.values())
+                # ★이 표는 @st.fragment 라, 셀을 고쳐도 표 '밖'(위쪽 '수정 대기' 등)은
+                #   안 갱신됩니다. 편집이 실제로 생기면 전체 리런을 한 번 해서 바깥도 갱신합니다.
+                #   (같은 값이면 리런 안 함 → 무한루프 없음)
+                if _changed:
+                    st.rerun()
         except Exception:  # noqa: BLE001
             pass
     target = pick_detail_target(selected, key) if show_detail else None

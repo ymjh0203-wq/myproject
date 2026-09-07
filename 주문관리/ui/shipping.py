@@ -287,29 +287,13 @@ def render() -> None:
     # 샵마인식 액션 버튼 바. 배송중은 확인/처리 주 버튼이 없습니다(유틸 버튼만).
     common.render_shopmine_action_bar("shipping", filtered_orders)
 
-    # 상세 = 기본 상세내역만. (송장 수정은 아래 표에서 택배사·송장번호를 직접 고쳐 일괄 처리)
+    # 상세 = 기본 상세내역만.
     def _shipping_detail(order):
         common.render_full_detail(order, reveal)
 
-    # ✏️ 표 안에서 택배사·송장번호를 '직접 클릭해 수정'할 수 있게 편집표로 그립니다.
-    st.caption(
-        "✏️ **송장 수정(여러 건 한 번에)**: 표에서 **택배사·송장번호 칸을 직접 고치기만** 하면 "
-        "아래 ‘수정 대기’에 쌓입니다. **검색으로 다른 사람을 찾아 또 고쳐도 유지**되고, 다 고친 뒤 "
-        "**‘대기 N건 일괄 송장 수정’**을 누르면 한꺼번에 쿠팡에 반영됩니다. (체크박스는 상세보기용)"
-    )
-    _courier_names = list(dict.fromkeys(models.COURIER_CODES.values()))  # 택배사명 목록(드롭다운용)
-    _ship_editable = {
-        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_names}},
-        "송장번호": {"cellEditor": "agTextCellEditor"},
-    }
-    common.render_full_table(
-        filtered_rows, filtered_orders, key="shipping",
-        detail_renderer=_shipping_detail,
-        multi_select=True,
-        editable=_ship_editable,
-    )
-
-    # ---- 수정 대기(누적) 계산: 표에서 고친 값이 '현재 등록 송장'과 다른 주문만 대상 ----
+    # ---- ✏️ 송장(운송장) 변경 — '수정 대기 + 일괄 반영'을 표 '위'에 둡니다 ----
+    #   (표가 길어 아래에 두면 안 보인다는 피드백 반영 → 위로 올림. 표에서 택배사·송장번호를
+    #    고치면 여기 대기목록에 바로 뜨고, 버튼 한 번으로 여러 건을 쿠팡에 반영합니다.)
     _name_to_code = {name: code for code, name in models.COURIER_CODES.items()}
 
     def _cur_courier_name(o):
@@ -343,48 +327,61 @@ def render() -> None:
             continue
         pending.append((o, code, new_inv, new_name or models.COURIER_CODES.get(code, code)))
 
-    st.divider()
+    st.caption(
+        "✏️ **송장(운송장) 변경**: 아래 표에서 **택배사·송장번호 칸을 직접 고치면** 여기 위 "
+        "‘수정 대기’에 바로 뜹니다. 여러 명 고친 뒤 **‘일괄 송장 변경’** 버튼으로 한 번에 반영돼요."
+    )
     if pending:
-        st.markdown(f"**✏️ 수정 대기: {len(pending)}건** (표에서 고친 것 · 검색 바꿔도 유지)")
-        for o, _code, _inv, _cname in pending[:20]:
-            _rcv = (o.get("shipping") or {}).get("receiver_name") or o.get("orderer_name") or "-"
-            st.write(f"- {o['market_order_id']} · {_rcv} → **{_cname} / {_inv}**")
-        if len(pending) > 20:
-            st.caption(f"…외 {len(pending) - 20}건")
-        c_apply, c_clear = st.columns([2, 1])
-        with c_apply:
-            if st.button(f"✏️ 대기 {len(pending)}건 일괄 송장 수정 (쿠팡 실제 반영)",
-                         type="primary", width="stretch", key="shipping_bulk_invoice_edit"):
-                done_ids = []
-                fails = []
-                bar = st.progress(0.0)
-                for i, (o, code, inv, _cn) in enumerate(pending):
-                    try:
-                        res = sync_service.update_invoice_for_shipping(o, code, inv)
-                        if res.get("succeeded"):
-                            done_ids.append(str(o["market_order_id"]))
-                        else:
-                            fails.append(f"{o['market_order_id']}: {res.get('message')}")
-                    except Exception as e:  # noqa: BLE001
-                        fails.append(f"{o['market_order_id']}: {e}")
-                    bar.progress((i + 1) / len(pending))
-                bar.empty()
-                if done_ids:
-                    st.success(f"{len(done_ids)}건 송장 수정 완료")
-                if fails:
-                    st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails[:12]))
-                # 성공한 건만 대기목록에서 비웁니다(실패 건은 남겨 다시 시도 가능).
-                st.session_state["shipping_edited_records"] = [
-                    r for r in _records if str(r.get("주문번호")) not in set(done_ids)
-                ]
-                if done_ids:
+        with st.container(border=True):
+            st.markdown(f"**✏️ 송장 변경 대기: {len(pending)}건**")
+            for o, _code, _inv, _cname in pending[:15]:
+                _rcv = (o.get("shipping") or {}).get("receiver_name") or o.get("orderer_name") or "-"
+                st.write(f"- {o['market_order_id']} · {_rcv} → **{_cname} / {_inv}**")
+            if len(pending) > 15:
+                st.caption(f"…외 {len(pending) - 15}건")
+            c_apply, c_clear = st.columns([2, 1])
+            with c_apply:
+                if st.button(f"✏️ 대기 {len(pending)}건 일괄 송장 변경 (쿠팡 실제 반영)",
+                             type="primary", width="stretch", key="shipping_bulk_invoice_edit"):
+                    done_ids = []
+                    fails = []
+                    bar = st.progress(0.0)
+                    for i, (o, code, inv, _cn) in enumerate(pending):
+                        try:
+                            res = sync_service.update_invoice_for_shipping(o, code, inv)
+                            if res.get("succeeded"):
+                                done_ids.append(str(o["market_order_id"]))
+                            else:
+                                fails.append(f"{o['market_order_id']}: {res.get('message')}")
+                        except Exception as e:  # noqa: BLE001
+                            fails.append(f"{o['market_order_id']}: {e}")
+                        bar.progress((i + 1) / len(pending))
+                    bar.empty()
+                    if done_ids:
+                        st.success(f"{len(done_ids)}건 송장 변경 완료")
+                    if fails:
+                        st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails[:12]))
+                    st.session_state["shipping_edited_records"] = [
+                        r for r in _records if str(r.get("주문번호")) not in set(done_ids)
+                    ]
+                    if done_ids:
+                        st.rerun(scope="app")
+            with c_clear:
+                if st.button("대기 비우기", width="stretch", key="shipping_clear_edits"):
+                    st.session_state["shipping_edited_records"] = []
                     st.rerun(scope="app")
-        with c_clear:
-            if st.button("대기 비우기", width="stretch", key="shipping_clear_edits"):
-                st.session_state["shipping_edited_records"] = []
-                st.rerun(scope="app")
-    else:
-        st.caption("표에서 택배사·송장번호를 고치면 여기에 '수정 대기'로 쌓입니다.")
+
+    _courier_names = list(dict.fromkeys(models.COURIER_CODES.values()))  # 택배사명 목록(드롭다운용)
+    _ship_editable = {
+        "택배사": {"cellEditor": "agSelectCellEditor", "cellEditorParams": {"values": _courier_names}},
+        "송장번호": {"cellEditor": "agTextCellEditor"},
+    }
+    common.render_full_table(
+        filtered_rows, filtered_orders, key="shipping",
+        detail_renderer=_shipping_detail,
+        multi_select=True,
+        editable=_ship_editable,
+    )
 
     # 표 아래 합계 요약 바(총 건수·결제·수수료·정산) — 신규주문과 동일.
     common.render_order_summary_bar(filtered_orders)
