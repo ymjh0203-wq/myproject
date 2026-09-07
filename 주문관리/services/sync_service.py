@@ -431,6 +431,17 @@ def advance_delivered_orders(progress=None) -> dict:
     }
 
 
+def close_returned_active_orders() -> dict:
+    """활성(신규주문/발송대기/배송중) 주문 중 '반품·취소 완료'된 건을 주문종료로 정리합니다.
+    (반품/취소가 끝났는데 앱엔 아직 배송중 등으로 남던 데이터 불일치를 없앱니다.)
+    반환: {status, closed_count, error_message}"""
+    try:
+        n = order_repository.close_active_orders_with_completed_claims()
+        return {"status": "success", "closed_count": n, "error_message": None}
+    except Exception as error:  # noqa: BLE001
+        return {"status": "fail", "closed_count": 0, "error_message": str(error)}
+
+
 def advance_confirmed_orders(min_days_since_order: int = 30, dry_run: bool = False,
                              progress=None) -> dict:
     """

@@ -962,6 +962,40 @@ def list_active_orders_for_account(market_account_id: int, work_statuses: list) 
         connection.close()
 
 
+def close_active_orders_with_completed_claims() -> int:
+    """활성(신규주문/발송대기/배송중) 주문 중 '완료된 반품/취소(RETURNS_COMPLETED)' 클레임이
+    있는 건을 '주문종료'로 정리합니다. (반품·취소가 완료됐는데 앱엔 아직 배송중 등으로 남아
+    실제 쿠팡과 안 맞던 데이터 불일치를 없앱니다.) 정리한 건수를 돌려줍니다.
+
+    ※ 배송완료 이후 단계는 건드리지 않습니다(배달 후 반품은 정상 이력이라 종료 아님).
+    """
+    active = (
+        models.WORK_STATUS_NEW,
+        models.WORK_STATUS_READY_TO_SHIP,
+        models.WORK_STATUS_SHIPPING,
+    )
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT orders.id
+            FROM orders
+            JOIN claims ON claims.market_order_id = orders.market_order_id
+            WHERE orders.work_status IN ({",".join("?" for _ in active)})
+              AND claims.claim_type IN ('RETURN', 'CANCEL')
+              AND claims.receipt_status = 'RETURNS_COMPLETED'
+            """,
+            active,
+        ).fetchall()
+        order_ids = [r["id"] for r in rows]
+    finally:
+        connection.close()
+
+    for order_id in order_ids:
+        update_work_status(order_id, models.WORK_STATUS_CLOSED, changed_by="auto-close-returned")
+    return len(order_ids)
+
+
 def update_work_status(order_id: int, new_status: str, changed_by: str = "manual") -> None:
     """주문의 내부 작업 상태를 바꾸고, 변경 이력을 함께 남깁니다."""
     connection = get_connection()

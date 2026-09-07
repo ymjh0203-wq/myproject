@@ -158,6 +158,8 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                 advanced_c += rc.get("advanced_count", 0) or 0
                 if rc.get("error_message"):
                     errors.append(rc["error_message"])
+                # 반품·취소 완료됐는데 아직 활성(배송중 등)으로 남은 주문 정리(데이터 불일치 방지).
+                closed_c += sync_service.close_returned_active_orders().get("closed_count", 0) or 0
             except Exception as error:  # noqa: BLE001
                 errors.append(str(error))
             done += 1
@@ -169,6 +171,8 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                 advanced_c += ad.get("advanced_count", 0) or 0
                 if ad.get("error_message"):
                     errors.append(ad["error_message"])
+                # 배송중 수집 때도 '반품·취소 완료된 배송중 주문'을 함께 정리합니다.
+                closed_c += sync_service.close_returned_active_orders().get("closed_count", 0) or 0
             except Exception as error:  # noqa: BLE001
                 errors.append(str(error))
             done += 1
