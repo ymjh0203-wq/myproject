@@ -81,23 +81,13 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
     grid_df = df.copy()
     grid_df.insert(0, IDX_COL, list(range(len(orders))))
 
-    # ★컬럼 순서 복원의 핵심: AG-Grid의 columns_state는 너비·숨김은 복원해도 '순서'는
-    # 복원하지 않습니다. 그래서 저장된 상태에서 순서(colId 배열)를 뽑아 DataFrame 컬럼
-    # 자체를 재정렬합니다. → AG-Grid 초기 컬럼 순서 = 저장 순서 → 새로고침해도 유지.
-    col_setting_key = f"aggrid_colstate:{key}"
-    saved = settings_repository.get_setting(col_setting_key)
-    prev_state = None
-    if saved:
-        try:
-            prev_state = json.loads(saved)
-        except Exception:
-            prev_state = None
-    prev_order = [c.get("colId") for c in (prev_state or []) if c.get("colId")]
-    if prev_order:
-        ordered = [c for c in prev_order if c in grid_df.columns]
-        if ordered:
-            rest = [c for c in grid_df.columns if c not in ordered]
-            grid_df = grid_df[ordered + rest]
+    # ★컬럼 순서는 '표시할 항목·순서'(column_order:{key}) 하나로만 관리합니다.
+    #   render_full_table이 그 순서대로 df를 이미 정렬해서 넘겨주므로, 여기서는 따로
+    #   재정렬하지 않습니다. (예전엔 aggrid_colstate로 한 번 더 정렬해서, 드래그하면
+    #   다중선택 순서로 되돌아가며 '깜빡이고 리셋'되는 문제가 있었음)
+    #   드래그로 순서를 바꾸면(아래) 그 결과를 column_order로 저장해 다음 렌더에 반영합니다.
+    system_cols = {IDX_COL, CS_FLAG_COL, QTY_FLAG_COL, BTN_CLICK_COL}
+    prev_visible_order = [c for c in grid_df.columns if c not in system_cols]
 
     # 줄마다 버튼을 넣을 컬럼(예: 퀵스타)이 있으면, 클릭 전달용 숨김 컬럼을 추가합니다.
     has_button = bool(button_col) and button_col in grid_df.columns
@@ -244,13 +234,18 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
         theme="streamlit",
     )
 
-    # 드래그가 끝나면(디바운스 후) 바뀐 '컬럼 순서'만 저장 → 다음 새로고침 때 그 순서로 복원.
-    # (순서가 실제로 바뀐 경우에만 저장 → 너비 변화 등으로 불필요하게 저장/재렌더 안 함.)
+    # 드래그가 끝나면(디바운스 후) 바뀐 '컬럼 순서'를 '표시할 항목·순서'(column_order:{key})에
+    # 저장합니다. 이 값 하나가 유일한 순서 기준이라, 다중선택 표시설정과 드래그가 서로
+    # 안 부딪혀서 '깜빡이며 리셋'되지 않습니다. 순서가 실제로 바뀐 경우에만 저장 후 새로고침.
+    # (render_full_table의 다중선택이 이 값을 다시 읽도록, 그 위젯 상태는 비워 둡니다.)
     try:
         new_state = response.columns_state
-        new_order = [c.get("colId") for c in (new_state or []) if c.get("colId")]
-        if new_order and new_order != prev_order:
-            settings_repository.set_setting(col_setting_key, json.dumps(new_state))
+        new_order_all = [c.get("colId") for c in (new_state or []) if c.get("colId")]
+        new_visible_order = [c for c in new_order_all if c not in system_cols]
+        if new_visible_order and new_visible_order != prev_visible_order:
+            settings_repository.set_setting(f"column_order:{key}", "|".join(new_visible_order))
+            st.session_state.pop(f"{key}_column_order", None)  # 다중선택이 새 순서를 다시 읽게
+            st.rerun(scope="app")  # 바깥 render_full_table이 새 순서로 df를 다시 정렬하도록 전체 새로고침
     except Exception:
         pass
 
