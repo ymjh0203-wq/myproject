@@ -238,6 +238,9 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
     # 저장합니다. 이 값 하나가 유일한 순서 기준이라, 다중선택 표시설정과 드래그가 서로
     # 안 부딪혀서 '깜빡이며 리셋'되지 않습니다. 순서가 실제로 바뀐 경우에만 저장 후 새로고침.
     # (render_full_table의 다중선택이 이 값을 다시 읽도록, 그 위젯 상태는 비워 둡니다.)
+    # ★st.rerun()은 예외(RerunException)로 동작하므로 try/except 밖에서 호출해야 합니다.
+    #   (안에서 부르면 except가 rerun을 삼켜 새로고침이 안 되고 옛 순서로 리셋돼 보임)
+    _need_order_rerun = False
     try:
         new_state = response.columns_state
         new_order_all = [c.get("colId") for c in (new_state or []) if c.get("colId")]
@@ -245,9 +248,11 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
         if new_visible_order and new_visible_order != prev_visible_order:
             settings_repository.set_setting(f"column_order:{key}", "|".join(new_visible_order))
             st.session_state.pop(f"{key}_column_order", None)  # 다중선택이 새 순서를 다시 읽게
-            st.rerun(scope="app")  # 바깥 render_full_table이 새 순서로 df를 다시 정렬하도록 전체 새로고침
+            _need_order_rerun = True
     except Exception:
         pass
+    if _need_order_rerun:
+        st.rerun(scope="app")  # 바깥 render_full_table이 새 순서로 df를 다시 정렬하도록 전체 새로고침
 
     # 머리글 클릭 정렬 → pandas 정렬(aggrid_sort)로 바꿔 저장. native 정렬은 remount마다 비워지므로
     #   클릭 시 보고된 컬럼 기준으로 방향을 순환(오름↔내림). 저장이 바뀌면 정렬 지문이 바뀌어
