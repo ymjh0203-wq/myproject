@@ -283,8 +283,9 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
 
     with st.container(border=True):
         st.markdown(
-            "**🔄 배대지 송장 변경분 자동 반영** — GR신청번호로 배대지의 **현재 송장**을 조회해, "
-            "쿠팡에 등록된 송장과 다른 주문을 찾아 한 번에 수정합니다."
+            "**🔄 배대지 송장 변경분 자동 반영** — GR신청번호로 배대지의 **경동택배(대형화물) 송장**을 "
+            "조회해, 쿠팡에 등록된 송장과 다른 주문만 찾아 한 번에 **경동택배 송장으로** 수정합니다. "
+            "(CJ 가송장 변경분은 잡지 않습니다.)"
         )
         if st.button(
             f"🔎 변경분 찾기 (대상 {len(gr_orders)}건)",
@@ -311,7 +312,7 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
 
         changes = res.get("changes") or []
         st.caption(
-            f"조회 {res['scanned']}건 · GR있음 {res['with_gr']} · 가송장없음 {res['no_invoice']} · "
+            f"조회 {res['scanned']}건 · GR있음 {res['with_gr']} · 경동송장없음 {res['no_invoice']} · "
             f"업체직송제외 {res.get('skipped_direct', 0)} · 오류 {res['errors']} → **변경 대상 {len(changes)}건**"
         )
         if res.get("error_samples"):

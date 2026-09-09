@@ -165,11 +165,9 @@ def scan_invoice_changes(orders: list, progress=None) -> dict:
         with_gr += 1
         try:
             data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
-            # ★변경 대상은 '무조건 경동택배'(대형화물, largeInvoice) 우선. 경동 송장이 있으면
-            #   그걸로 바꾸고, 없으면 기존처럼 CJ 가송장(invoice) 변경분을 봅니다.
+            # ★변경 대상은 '경동택배(대형화물, largeInvoice) 송장'만. (사용자 요청)
+            #   CJ 가송장(invoice) 변경분은 잡지 않습니다 — 경동 송장이 없으면 이 주문은 건너뜁니다.
             code, new_inv = _pick_kdexp_invoice(data)
-            if not new_inv:
-                code, new_inv = _extract_tracking(data)
         except Exception as e:  # noqa: BLE001
             errors += 1
             if len(error_samples) < 6:
