@@ -82,11 +82,17 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
     grid_df.insert(0, IDX_COL, list(range(len(orders))))
 
     # ★컬럼 순서는 '표시할 항목·순서'(column_order:{key}) 하나로만 관리합니다.
-    #   render_full_table이 그 순서대로 df를 이미 정렬해서 넘겨주므로, 여기서는 따로
-    #   재정렬하지 않습니다. (예전엔 aggrid_colstate로 한 번 더 정렬해서, 드래그하면
-    #   다중선택 순서로 되돌아가며 '깜빡이고 리셋'되는 문제가 있었음)
-    #   드래그로 순서를 바꾸면(아래) 그 결과를 column_order로 저장해 다음 렌더에 반영합니다.
+    #   드래그로 순서를 바꾸면(아래) 그 결과를 column_order에 저장하고, 여기서 매 렌더마다
+    #   그 저장 순서로 df 컬럼을 재정렬합니다. → 어느 화면이든(발송대기/취소/반품 등 호출부가
+    #   df를 자기 순서로 넘겨도) 저장된 드래그 순서가 최종적으로 이깁니다. (예전엔 호출부가
+    #   넘긴 순서를 그대로 써서, 드래그해도 다음 렌더에 원래대로 되돌아갔음)
     system_cols = {IDX_COL, CS_FLAG_COL, QTY_FLAG_COL, BTN_CLICK_COL}
+    _saved_order = settings_repository.get_setting(f"column_order:{key}")
+    if _saved_order:
+        _want = [c for c in _saved_order.split("|") if c in grid_df.columns and c != IDX_COL]
+        if _want:
+            _rest = [c for c in grid_df.columns if c != IDX_COL and c not in _want]
+            grid_df = grid_df[[IDX_COL] + _want + _rest]
     prev_visible_order = [c for c in grid_df.columns if c not in system_cols]
 
     # 줄마다 버튼을 넣을 컬럼(예: 퀵스타)이 있으면, 클릭 전달용 숨김 컬럼을 추가합니다.
