@@ -1043,8 +1043,10 @@ def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None
 
 
 def _short_date(ordered_at: str) -> str:
-    """주문일시에서 날짜만 뽑아 약식으로 보여줍니다. (예: 2026-07-19)"""
-    return (ordered_at or "")[:10] or "-"
+    """주문일시를 날짜+시간으로 보여줍니다. (샵마인처럼 시간까지, 예: 2026-07-19 15:57:37)
+    ISO의 'T' 구분자는 공백으로 바꿔 보기 좋게 하고, 값이 짧으면 있는 만큼만 보여줍니다."""
+    s = (ordered_at or "").strip().replace("T", " ")
+    return s[:19] if s else "-"
 
 
 def _yyyymmdd(ordered_at: str) -> str:
