@@ -197,7 +197,10 @@ def list_claims(claim_type: str) -> list:
     try:
         rows = connection.execute(
             """
-            SELECT claims.*, market_accounts.market_name AS market_account_name
+            SELECT claims.*, market_accounts.market_name AS market_account_name,
+                   (SELECT o.ordered_at FROM orders o
+                    WHERE o.market_order_id = claims.market_order_id
+                    ORDER BY o.ordered_at LIMIT 1) AS ordered_at
             FROM claims
             LEFT JOIN market_accounts ON market_accounts.id = claims.market_account_id
             WHERE claims.claim_type = ?
