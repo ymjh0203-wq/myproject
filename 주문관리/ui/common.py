@@ -885,7 +885,15 @@ def excel_export_dialog(all_orders: list, selected_orders: list, key: str, revea
 
     templates = excel_template_repository.list_templates()
     names = ["(기본 전체 컬럼)"] + [t["name"] for t in templates]
-    pick = st.selectbox("엑셀 양식", range(len(names)), format_func=lambda i: names[i], key=f"{key}_exp_tpl")
+    # ★지난번에 고른 양식을 기억해 기본으로 선택해 둡니다(재시작해도 유지). 그래야 매번
+    #   드롭다운을 안 바꿔도 사장님 양식으로 바로 뽑힙니다. (예전엔 항상 '기본 전체 컬럼'으로
+    #   초기화돼서, 양식을 안 고르면 전체컬럼으로 나가 '양식과 안 맞는다'고 느껴졌음)
+    _saved_tpl = settings_repository.get_setting("excel_export_template_name")
+    _default_idx = names.index(_saved_tpl) if _saved_tpl in names else (1 if templates else 0)
+    pick = st.selectbox("엑셀 양식", range(len(names)), index=_default_idx,
+                        format_func=lambda i: names[i], key=f"{key}_exp_tpl")
+    if names[pick] != _saved_tpl:
+        settings_repository.set_setting("excel_export_template_name", names[pick])
 
     rows = [build_full_row(o, i + 1, reveal=reveal) for i, o in enumerate(orders)]
     data = build_excel_bytes(rows) if pick == 0 else build_excel_from_template(rows, templates[pick - 1]["columns"])
