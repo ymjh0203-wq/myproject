@@ -795,10 +795,50 @@ def render_background_collect(period_from, period_to, key: str, stages: list = N
         _collect_progress_fragment(key)
 
 
+def _suppress_number_as_text(xlsx_bytes: bytes) -> bytes:
+    """
+    엑셀 셀 왼쪽 위 '초록 삼각형'(=텍스트로 저장된 숫자 경고)을 없앱니다.
+    주문번호·송장번호·금액처럼 숫자로 보이는 '텍스트' 값에 Excel이 붙이는 경고 표시인데,
+    실제 오류가 아니고 보기에 안 좋아서 끕니다. 값(데이터)은 전혀 바꾸지 않습니다
+    (긴 주문번호를 숫자로 바꾸면 정밀도가 깨지므로, 텍스트는 그대로 두고 경고만 끔).
+
+    방법: xlsx(zip) 안의 각 시트 XML에 <ignoredErrors numberStoredAsText> 를 직접 넣습니다.
+    (openpyxl 3.1은 이 요소를 저장해주지 않아, zip을 후처리합니다.)
+    """
+    import re
+    import zipfile
+
+    try:
+        src = io.BytesIO(xlsx_bytes)
+        out = io.BytesIO()
+        with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                content = zin.read(item.filename)
+                is_sheet = item.filename.startswith("xl/worksheets/sheet") and item.filename.endswith(".xml")
+                if is_sheet:
+                    text = content.decode("utf-8")
+                    if "<ignoredErrors" not in text and "</worksheet>" in text:
+                        m = re.search(r'<dimension ref="([^"]+)"', text)
+                        sqref = m.group(1) if m else "A1:XFD1048576"
+                        if ":" not in sqref:  # 데이터가 1칸뿐이면 범위 형태로
+                            sqref = f"{sqref}:{sqref}"
+                        inject = (
+                            f'<ignoredErrors><ignoredError sqref="{sqref}" '
+                            f'numberStoredAsText="1"/></ignoredErrors>'
+                        )
+                        text = text.replace("</worksheet>", inject + "</worksheet>")
+                    content = text.encode("utf-8")
+                zout.writestr(item, content)
+        return out.getvalue()
+    except Exception:  # noqa: BLE001
+        # 후처리 실패 시 원본 그대로 반환(경고 표시만 남고 파일은 정상).
+        return xlsx_bytes
+
+
 def build_excel_bytes(rows: list) -> bytes:
     buffer = io.BytesIO()
     pd.DataFrame(rows).to_excel(buffer, index=False, engine="openpyxl")
-    return buffer.getvalue()
+    return _suppress_number_as_text(buffer.getvalue())
 
 
 # 사용자 정의 엑셀 양식에서 컬럼 '값'으로 고를 수 있는 특수 항목(주문 컬럼이 아닌 것).
@@ -836,7 +876,7 @@ def build_excel_from_template(full_rows: list, template_columns: list) -> bytes:
     buffer = io.BytesIO()
     # columns=headers 로 넘기면 제목이 중복돼도(양식에서 같은 제목 두 번 써도) 안전합니다.
     pd.DataFrame(data, columns=headers).to_excel(buffer, index=False, engine="openpyxl")
-    return buffer.getvalue()
+    return _suppress_number_as_text(buffer.getvalue())
 
 
 def render_template_excel_download(excel_rows: list, key: str, filename: str) -> None:
