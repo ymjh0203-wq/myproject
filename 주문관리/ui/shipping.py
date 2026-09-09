@@ -372,8 +372,40 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
             st.rerun(scope="app")
 
 
+def _auto_advance_delivered_bg() -> None:
+    """
+    배송중 화면을 열면, 20분에 한 번 백그라운드로 '배송완료 전진'을 자동 실행합니다.
+    쿠팡에서 이미 배송완료된 주문이 '수집하기'를 안 눌러도 배송중에 계속 남지 않도록
+    자동 정리합니다. (백그라운드라 화면은 안 멈춤. 정리된 주문은 다음 새로고침에 빠집니다.)
+    """
+    from datetime import date, datetime, timedelta
+
+    from services import collect_worker
+    from repositories import settings_repository
+
+    key = "shipping_autoadvance"
+    last = settings_repository.get_setting("shipping_autoadvance_at")
+    due = True
+    if last:
+        try:
+            due = datetime.fromisoformat(last) < datetime.now() - timedelta(minutes=20)
+        except ValueError:
+            due = True
+    if due:
+        started = collect_worker.start(
+            key, [], date.today(), date.today(), advance_delivered=True
+        )
+        if started:
+            settings_repository.set_setting(
+                "shipping_autoadvance_at", datetime.now().isoformat(timespec="seconds")
+            )
+
+
 def render() -> None:
     st.header("배송중")
+
+    # 쿠팡에서 배송완료된 주문을 배송중에 남겨두지 않도록, 화면 열 때 자동 정리(백그라운드·20분 간격).
+    _auto_advance_delivered_bg()
 
     if st.session_state.get("shipping_tax_scan_result"):
         _r = st.session_state.pop("shipping_tax_scan_result")
