@@ -1183,8 +1183,10 @@ def build_full_row(order: dict, row_no: int, reveal: bool = False) -> dict:
         # 배송비 포함 금액(샵마인 값 매핑과 동일) — 엑셀 양식 값으로만 쓰이고 표에는 안 나옵니다.
         "실결제금액(배송비포함)": f"{paid_with_shipping:,}",
         "정산예정금액(배송비포함)": f"{settlement_with_shipping:,}",
-        "주문일시": order["ordered_at"],
-        "결제일시": order.get("paid_at") or "-",
+        # 주문일시·결제일시는 깔끔한 'YYYY-MM-DD HH:MM:SS'로. (ISO의 T·타임존을 그대로 두면
+        # Excel이 날짜로 자동인식하며 시간을 숨겨버려서, 엑셀 양식에서 시간이 안 뜨던 문제 해결)
+        "주문일시": _short_date(order["ordered_at"]),
+        "결제일시": _short_date(order.get("paid_at")) if order.get("paid_at") else "-",
         "클레임접수일시": "-",
         "발송예정일": _format_item_field(items, "estimated_shipping_date"),
         "인터파크 공급계약번호": "-",
