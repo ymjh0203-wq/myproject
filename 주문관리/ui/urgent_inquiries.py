@@ -121,14 +121,33 @@ def _render_list_with_detail(rows: list, key: str) -> None:
                 "동작하지 않아서 아직 연결하지 않았습니다."
             )
 
-        # 이 문의의 원주문 상세내역(고객·상품·주소 등)도 함께 — 발송대기 상세처럼.
-        _moid = detail.get("상품/주문번호")
-        if _moid and str(_moid) not in ("", "-"):
+        # 이 문의를 남긴 고객이 '실제로 구매한' 주문이 있으면 그 주문 상세내역도 함께 보여줍니다.
+        #   - 콜센터문의: '상품/주문번호' 칸이 곧 주문번호.
+        #   - 상품문의: '상품/주문번호'는 상품ID라 주문이 아님 → order_ids(구매 주문번호들)로 찾습니다.
+        _order_moids = []
+        if detail.get("문의종류") == "상품문의":
+            _order_moids = [o.strip() for o in str(detail.get("_order_ids") or "").split(",") if o.strip()]
+        else:
+            _mo = detail.get("상품/주문번호")
+            if _mo and str(_mo) not in ("", "-"):
+                _order_moids = [str(_mo)]
+
+        _shown = 0
+        for _moid in _order_moids:
             _order = order_repository.get_full_order_by_market_id(_moid)
             if _order:
                 st.divider()
-                st.markdown("**주문 상세내역**")
+                st.markdown(f"**주문 상세내역** — {_moid}")
                 common.render_full_detail(_order, reveal=True)
+                _shown += 1
+        if _order_moids and _shown == 0:
+            st.divider()
+            st.caption(
+                "이 고객의 주문번호는 확인되지만, 해당 주문이 아직 앱에 수집되지 않아 상세를 못 보여줍니다. "
+                "(그 주문 단계에서 '수집하기'를 하면 상세가 보입니다.)"
+            )
+        elif detail.get("문의종류") == "상품문의" and not _order_moids:
+            st.caption("※ 이 상품문의는 구매 고객의 주문과 연결되지 않았습니다(주문 전 문의 등).")
     else:
         st.caption("표 왼쪽 체크박스를 체크하면 여기에 문의 전체 내용이 나타납니다.")
 
@@ -225,6 +244,8 @@ def _unified_rows() -> list:
                 "_answered": bool(i["answered"]),
                 "_answer_content": i.get("answer_content") or "",
                 "_product_url": product_url,
+                # 이 문의를 남긴 '구매 고객'의 주문번호들(콤마구분). 구매 고객 문의면 주문 상세를 보여줍니다.
+                "_order_ids": i.get("order_ids") or "",
             }
         )
     for i in inquiry_repository.list_call_center_inquiries():
