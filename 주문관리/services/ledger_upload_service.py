@@ -24,7 +24,25 @@ _H_ORDER = ["마켓 주문번호", "마켓주문번호", "주문번호"]
 _H_QTY = ["주문수량", "수량"]
 _H_COST = ["단순매입가"]
 _H_SHIP = ["배송비용"]
+_H_DATE = ["주문시간", "주문일시", "주문일", "결제 일시", "결제일시"]  # 기간 필터 기준 날짜
 _NOTE_HEADER = "비고(자동확인)"
+
+
+def _row_date(cell_value):
+    """셀 값(문자열/날짜)에서 날짜(date)만 뽑습니다. 못 읽으면 None."""
+    from datetime import date
+    if cell_value is None:
+        return None
+    if hasattr(cell_value, "date") and not isinstance(cell_value, str):
+        try:
+            return cell_value.date()
+        except Exception:  # noqa: BLE001
+            pass
+    s = str(cell_value).strip().replace("T", " ")[:10]
+    try:
+        return date.fromisoformat(s)
+    except ValueError:
+        return None
 
 
 def _to_float(value):
@@ -87,8 +105,9 @@ def _find_headers(ws):
     col_qty = _pick(_H_QTY)
     col_cost = _pick(_H_COST)
     col_ship = _pick(_H_SHIP)
+    col_date = _pick(_H_DATE)
     col_note = header.get(_NOTE_HEADER) or (last_col + 1)  # 없으면 맨 끝에 새로 만듦
-    return col_order, col_qty, col_cost, col_ship, col_note
+    return col_order, col_qty, col_cost, col_ship, col_date, col_note
 
 
 def _pick_sheet(wb):
@@ -104,11 +123,12 @@ def _pick_sheet(wb):
     return wb[wb.sheetnames[0]]
 
 
-def fill_uploaded_ledger(file_bytes: bytes, progress=None) -> dict:
+def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progress=None) -> dict:
     """
     업로드한 매출 엑셀에 배대지 단가·배송비를 채워 새 엑셀 bytes를 돌려줍니다.
-    반환: {ok, out_bytes, sheet, stats{rows,filled_price,filled_ship,no_gr,not_in_db,err,suspect},
-           notes:[(주문번호,사유)], error}
+    date_from/date_to(date, 선택): 주면 그 '주문시간' 기간 안의 행만 채우고, 기간 밖은
+    건드리지 않습니다(이미 정리 끝난 앞부분 보존용). 둘 다 None이면 전체를 채웁니다.
+    반환: {ok, out_bytes, sheet, date_col, stats{...,skipped}, notes:[(주문번호,사유)], error}
     """
     import openpyxl
 
@@ -118,7 +138,12 @@ def fill_uploaded_ledger(file_bytes: bytes, progress=None) -> dict:
         return {"ok": False, "error": f"엑셀을 열 수 없습니다: {e}"}
 
     ws = _pick_sheet(wb)
-    col_order, col_qty, col_cost, col_ship, col_note = _find_headers(ws)
+    col_order, col_qty, col_cost, col_ship, col_date, col_note = _find_headers(ws)
+    _use_range = (date_from is not None) or (date_to is not None)
+    if _use_range and not col_date:
+        return {"ok": False,
+                "error": f"[{ws.title}] 시트에서 기간 필터에 쓸 날짜 칸('주문시간' 등)을 못 찾았습니다. "
+                         "기간 없이 전체 채우기로 해주세요."}
     missing = []
     if not col_order:
         missing.append("마켓 주문번호")
@@ -151,10 +176,21 @@ def fill_uploaded_ledger(file_bytes: bytes, progress=None) -> dict:
 
     gr_cache = {}
     stats = {"rows": 0, "filled_price": 0, "filled_ship": 0,
-             "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0}
+             "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0}
     notes = []
 
     for idx, r in enumerate(data_rows):
+        # 기간 지정 시: 그 행의 '주문시간' 날짜가 기간 밖이거나 못 읽으면 건드리지 않고 건너뜀.
+        if _use_range:
+            d = _row_date(ws.cell(r, col_date).value)
+            if d is None or (date_from and d < date_from) or (date_to and d > date_to):
+                stats["skipped"] += 1
+                if progress:
+                    try:
+                        progress(idx + 1, len(data_rows))
+                    except Exception:  # noqa: BLE001
+                        pass
+                continue
         stats["rows"] += 1
         moid = str(ws.cell(r, col_order).value).strip()
         qty = int(_to_float(ws.cell(r, col_qty).value) or 0) if col_qty else 0
@@ -220,8 +256,9 @@ def fill_uploaded_ledger(file_bytes: bytes, progress=None) -> dict:
 
     buf = io.BytesIO()
     wb.save(buf)
+    _date_col_name = ws.cell(1, col_date).value if col_date else None
     return {"ok": True, "out_bytes": buf.getvalue(), "sheet": ws.title,
-            "stats": stats, "notes": notes, "error": None}
+            "date_col": _date_col_name, "stats": stats, "notes": notes, "error": None}
 
 
 def _gr_map_fallback() -> dict:

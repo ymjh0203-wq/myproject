@@ -16,6 +16,7 @@
 # ==========================================================
 
 import io
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -71,21 +72,38 @@ def _render_upload_fill() -> None:
             "**‘비고(자동확인)’** 칸에 사유를 적습니다. (값은 그대로 두고 두 칸만 채워 안전)"
         )
         up = st.file_uploader("매출 엑셀 파일(.xlsx)", type=["xlsx"], key="ledger_upload_file")
+
+        # ★기간 지정: 월 중간부터 정리할 때(예: 14일까지 완료 → 15~30일만) 그 기간 주문만 채우고
+        #   나머지(이미 끝난 앞부분)는 건드리지 않습니다. '주문시간' 날짜 기준.
+        _use_range = st.checkbox(
+            "기간 지정해서 그 기간만 채우기 (나머지는 안 건드림)", value=False, key="ledger_upload_userange",
+            help="예: 9월 15~30일만 채우기. '주문시간' 날짜가 이 기간 안인 행만 원가·배송비를 채웁니다.",
+        )
+        _dfrom = _dto = None
+        if _use_range:
+            _today = date.today()
+            dc1, dc2 = st.columns(2)
+            with dc1:
+                _dfrom = st.date_input("시작일(주문일)", value=_today.replace(day=1), key="ledger_upload_from")
+            with dc2:
+                _dto = st.date_input("종료일(주문일)", value=_today, key="ledger_upload_to")
+
         if up is not None and st.button("🔎 이 파일에 원가·배송비 채우기", type="primary", key="ledger_upload_run"):
             bar = st.progress(0.0, text="배대지 조회 준비 중...")
             res = ledger_upload_service.fill_uploaded_ledger(
-                up.getvalue(),
-                progress=lambda i, n: bar.progress(i / n, text=f"배대지 조회 {i}/{n}"),
+                up.getvalue(), date_from=_dfrom, date_to=_dto,
+                progress=lambda i, n: bar.progress(i / n, text=f"처리 {i}/{n}"),
             )
             bar.empty()
             if not res.get("ok"):
                 st.error(res.get("error") or "채우기에 실패했습니다.")
             else:
                 s = res["stats"]
+                _rng = f" · 기간밖 건너뜀 {s.get('skipped', 0)}건" if _use_range else ""
                 st.success(
-                    f"[{res['sheet']}] 시트 {s['rows']}행 처리 — 원가 {s['filled_price']}건 · "
-                    f"배송비 {s['filled_ship']}건 채움. (GR없음 {s['no_gr']} · 앱에없음 {s['not_in_db']} · "
-                    f"의심 {s['suspect']} · 오류 {s['err']})"
+                    f"[{res['sheet']}] 시트 — 원가 {s['filled_price']}건 · 배송비 {s['filled_ship']}건 채움 "
+                    f"(처리 {s['rows']}행{_rng}). GR없음 {s['no_gr']} · 앱에없음 {s['not_in_db']} · "
+                    f"의심 {s['suspect']} · 오류 {s['err']}"
                 )
                 # 채운 파일 세션에 보관 → 아래 다운로드 버튼(새로고침돼도 유지)
                 st.session_state["ledger_upload_result"] = res
