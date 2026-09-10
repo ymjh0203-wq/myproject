@@ -25,6 +25,8 @@ _H_QTY = ["주문수량", "수량"]
 _H_COST = ["단순매입가"]
 _H_SHIP = ["배송비용"]
 _H_DATE = ["주문시간", "주문일시", "주문일", "결제 일시", "결제일시"]  # 기간 필터 기준 날짜
+# ★GR(그룹번호=퀵스타 신청번호) 열이 시트에 있으면 그걸 바로 씁니다(DB 조회 불필요).
+_H_GR = ["퀵스타 신청번호", "그룹번호", "GR신청번호", "GR 신청번호", "GR", "신청번호", "신청번호*"]
 _NOTE_HEADER = "비고(자동확인)"
 
 
@@ -106,8 +108,9 @@ def _find_headers(ws):
     col_cost = _pick(_H_COST)
     col_ship = _pick(_H_SHIP)
     col_date = _pick(_H_DATE)
+    col_gr = _pick(_H_GR)
     col_note = header.get(_NOTE_HEADER) or (last_col + 1)  # 없으면 맨 끝에 새로 만듦
-    return col_order, col_qty, col_cost, col_ship, col_date, col_note
+    return col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_note
 
 
 def _pick_sheet(wb):
@@ -138,15 +141,16 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         return {"ok": False, "error": f"엑셀을 열 수 없습니다: {e}"}
 
     ws = _pick_sheet(wb)
-    col_order, col_qty, col_cost, col_ship, col_date, col_note = _find_headers(ws)
+    col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_note = _find_headers(ws)
     _use_range = (date_from is not None) or (date_to is not None)
     if _use_range and not col_date:
         return {"ok": False,
                 "error": f"[{ws.title}] 시트에서 기간 필터에 쓸 날짜 칸('주문시간' 등)을 못 찾았습니다. "
                          "기간 없이 전체 채우기로 해주세요."}
     missing = []
-    if not col_order:
-        missing.append("마켓 주문번호")
+    # GR(그룹번호) 열이 있으면 주문번호 없이도 됩니다. 둘 다 없을 때만 오류.
+    if not col_order and not col_gr:
+        missing.append("마켓 주문번호(또는 GR/그룹번호)")
     if not col_cost:
         missing.append("단순매입가")
     if not col_ship:
@@ -156,10 +160,11 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                 "error": f"[{ws.title}] 시트에서 '{', '.join(missing)}' 칸을 못 찾았습니다. "
                          "헤더(첫 줄) 이름이 매출 양식과 같은지 확인해주세요."}
 
-    # 비고 헤더는 기존 헤더(주문번호 헤더)의 폰트를 그대로 써서 시트와 통일.
+    # 비고 헤더는 기존 헤더의 폰트를 그대로 써서 시트와 통일.
+    _hdr_ref = col_order or col_gr or col_cost
     _hdr_cell = ws.cell(1, col_note)
     _hdr_cell.value = _NOTE_HEADER
-    _hdr_cell.font = copy.copy(ws.cell(1, col_order).font)
+    _hdr_cell.font = copy.copy(ws.cell(1, _hdr_ref).font)
 
     # 앱 DB: 마켓주문번호 → GR
     gr_map = order_repository.get_gr_by_market_order_ids() if hasattr(
@@ -167,10 +172,11 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
     if gr_map is None:
         gr_map = _gr_map_fallback()
 
-    # 채울 행 목록(주문번호 있는 데이터행) 먼저 수집 → 진행률 표시용
+    # 채울 행 목록(주문번호 또는 GR 있는 데이터행) 먼저 수집 → 진행률 표시용
+    _key_col = col_order or col_gr
     data_rows = []
     for r in range(2, ws.max_row + 1):
-        v = ws.cell(r, col_order).value
+        v = ws.cell(r, _key_col).value
         if v is not None and str(v).strip():
             data_rows.append(r)
 
@@ -192,18 +198,23 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                         pass
                 continue
         stats["rows"] += 1
-        moid = str(ws.cell(r, col_order).value).strip()
+        moid = str(ws.cell(r, col_order).value or "").strip() if col_order else ""
         qty = int(_to_float(ws.cell(r, col_qty).value) or 0) if col_qty else 0
+        # ★GR은 '시트에 적힌 값 우선'(그룹번호 열) → 없으면 주문번호로 앱 DB에서 찾음.
+        sheet_gr = str(ws.cell(r, col_gr).value or "").strip() if col_gr else ""
+        label = moid or sheet_gr  # 비고 목록에 보여줄 식별자
+        _ref_col = col_order or col_gr or col_cost  # 폰트 복사용 기준열(항상 존재)
         note = ""
-        if moid not in gr_map:
-            note = "앱에 없는 주문(수집 안 됨)"
-            stats["not_in_db"] += 1
-        else:
-            gr = (gr_map.get(moid) or "").strip()
-            if not gr:
+        gr = sheet_gr or (gr_map.get(moid) or "").strip()
+        if not gr:
+            if not sheet_gr and moid and moid not in gr_map:
+                note = "앱에 없는 주문(수집 안 됨)"
+                stats["not_in_db"] += 1
+            else:
                 note = "GR 없음(배대지 접수 안 됨)"
                 stats["no_gr"] += 1
-            else:
+        else:
+            if True:
                 try:
                     if gr in gr_cache:
                         data = gr_cache[gr]
@@ -211,8 +222,8 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                         data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
                         gr_cache[gr] = data
                     unit, ship, tcnt, kinds = _extract_costs(data, qty)
-                    # 채운 셀 폰트를 그 행의 기존 셀(주문번호)과 동일하게 맞춥니다(맑은 고딕 12 등).
-                    _row_font = copy.copy(ws.cell(r, col_order).font)
+                    # 채운 셀 폰트를 그 행의 기존 셀과 동일하게 맞춥니다(맑은 고딕 12 등).
+                    _row_font = copy.copy(ws.cell(r, _ref_col).font)
                     if unit is not None:
                         _cc = ws.cell(r, col_cost)
                         _cc.value = unit
@@ -245,9 +256,9 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                     stats["err"] += 1
         _nc = ws.cell(r, col_note)
         _nc.value = note
-        _nc.font = copy.copy(ws.cell(r, col_order).font)  # 비고도 그 행 폰트와 통일
+        _nc.font = copy.copy(ws.cell(r, _ref_col).font)  # 비고도 그 행 폰트와 통일
         if note:
-            notes.append((moid, note))
+            notes.append((label, note))
         if progress:
             try:
                 progress(idx + 1, len(data_rows))
