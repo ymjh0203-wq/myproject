@@ -2513,7 +2513,8 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             "접수번호": c["receipt_id"],
             "주문번호": c["market_order_id"] or "-",
             "마켓": MARKET_DISPLAY_NAME.get(c.get("market_name"), c.get("market_name") or "-"),
-            "주문일": _short_date(c.get("ordered_at")) if c.get("ordered_at") else "-",
+            "주문일": (c.get("ordered_at") or "")[:10] or "-",
+            "최초 주문일시": _short_date(c.get("ordered_at")) if c.get("ordered_at") else "-",
             "상점": c.get("market_account_name") or "-",
             "처리상태": (
                 "출고중지요청(미처리)" if _is_release_stop_pending(c)
