@@ -114,6 +114,16 @@ def _render_list_with_detail(rows: list, key: str) -> None:
                         st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
                         st.code(_purl)
                 st.caption(f"상품 링크: {_purl}")
+
+            # 문의온 상품의 타오바오 구매 링크 — 발송대기 상세처럼 바로 열 수 있게. 주문이 없어도
+            # 상품코드만 있으면 링크를 걸 수 있고, 같은 상품이면 주문 상세의 링크와 공유됩니다.
+            st.markdown("**🛒 타오바오 구매 링크 (문의 상품)**")
+            common.render_taobao_link_for_inquiry(
+                detail.get("_seller_product_id"),
+                detail.get("상품명") or "",
+                key_prefix=f"inq{detail.get('_row_id')}",
+            )
+
             _render_answer_form(detail)
         else:
             st.caption(
@@ -246,6 +256,8 @@ def _unified_rows() -> list:
                 "_product_url": product_url,
                 # 이 문의를 남긴 '구매 고객'의 주문번호들(콤마구분). 구매 고객 문의면 주문 상세를 보여줍니다.
                 "_order_ids": i.get("order_ids") or "",
+                # 문의온 상품의 판매자상품코드 → 타오바오 구매 링크 연결용(주문 없어도 링크 가능).
+                "_seller_product_id": i.get("seller_product_id") or "",
             }
         )
     for i in inquiry_repository.list_call_center_inquiries():

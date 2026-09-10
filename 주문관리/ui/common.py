@@ -1350,14 +1350,51 @@ def apply_replace_rules(row: dict) -> dict:
     return row
 
 
+def _render_taobao_links_for_code(code: str, name: str, key_prefix: str) -> None:
+    """
+    한 상품코드(판매자상품코드)에 저장된 타오바오 링크들을 보여주고(열기/삭제) 추가 저장합니다.
+    key_prefix: 위젯 키 충돌을 막기 위한 접두어(주문이면 주문id, 문의면 문의행 식별자).
+    링크는 '상품코드' 기준으로 저장되므로, 주문/문의 어디서 저장하든 같은 상품이면 공유됩니다.
+    """
+    from repositories import taobao_link_repository
+
+    links = taobao_link_repository.list_for_code(code)
+    for i, lk in enumerate(links):
+        label = lk.get("label") or f"링크 {i + 1}"
+        cols = st.columns([5, 1])
+        with cols[0]:
+            if st.button(f"🔗 타오바오 열기 · {label}", key=f"tb_open_{key_prefix}_{lk['id']}", type="primary", width="stretch"):
+                if not open_in_chrome(lk["url"]):
+                    st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
+                    st.code(lk["url"])
+        with cols[1]:
+            if st.button("삭제", key=f"tb_del_{key_prefix}_{lk['id']}", width="stretch"):
+                taobao_link_repository.delete(lk["id"])
+                st.rerun()
+
+    with st.expander(f"➕ 타오바오 링크 추가  (상품코드 {code}, 현재 {len(links)}개)", expanded=not links):
+        new_label = st.text_input("구분 이름(선택)", key=f"tb_lbl_{key_prefix}_{code}",
+                                  placeholder="예: 1번 / 저렴이 / 예비")
+        new_url = st.text_input(
+            "타오바오 상품 URL", key=f"tb_url_{key_prefix}_{code}",
+            placeholder="https://item.taobao.com/... 또는 https://detail.tmall.com/...",
+            help="여기 저장하면 이 상품(코드)의 모든 주문·문의에서 위 버튼으로 열립니다. 여러 개 추가 가능.",
+        )
+        if st.button("💾 링크 추가 저장", key=f"tb_add_{key_prefix}_{code}"):
+            if new_url.strip():
+                taobao_link_repository.add(code, name, new_url, label=new_label)
+                st.success("추가했습니다. 이 상품의 모든 주문·문의에 적용됩니다.")
+                st.rerun()
+            else:
+                st.warning("URL을 입력해주세요.")
+
+
 def render_taobao_link_section(order: dict) -> None:
     """
     주문의 상품(판매자상품코드)별 타오바오 구매 링크를 보여주고 저장합니다.
     - 한 상품에 링크 여러 개(2~3개) 저장 가능 → 각각 '열기' 버튼(크롬으로 열림)
     - '링크 추가'로 계속 더할 수 있고, 저장하면 그 상품코드의 '모든 주문'에 적용됩니다.
     """
-    from repositories import taobao_link_repository
-
     items = order.get("items") or []
     seen = set()
     any_product = False
@@ -1367,42 +1404,23 @@ def render_taobao_link_section(order: dict) -> None:
             continue
         seen.add(code)
         any_product = True
-        name = item.get("product_name") or ""
-        links = taobao_link_repository.list_for_code(code)
-
-        # 저장된 링크들 → 각각 '열기' 버튼 (여러 개 지원)
-        for i, lk in enumerate(links):
-            label = lk.get("label") or f"링크 {i + 1}"
-            cols = st.columns([5, 1])
-            with cols[0]:
-                if st.button(f"🔗 타오바오 열기 · {label}", key=f"tb_open_{order['id']}_{lk['id']}", type="primary", width="stretch"):
-                    if not open_in_chrome(lk["url"]):
-                        st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
-                        st.code(lk["url"])
-            with cols[1]:
-                if st.button("삭제", key=f"tb_del_{order['id']}_{lk['id']}", width="stretch"):
-                    taobao_link_repository.delete(lk["id"])
-                    st.rerun()
-
-        # 링크 추가 (여러 번 눌러 2~3개 계속 추가 가능)
-        with st.expander(f"➕ 타오바오 링크 추가  (상품코드 {code}, 현재 {len(links)}개)", expanded=not links):
-            new_label = st.text_input("구분 이름(선택)", key=f"tb_lbl_{order['id']}_{code}",
-                                      placeholder="예: 1번 / 저렴이 / 예비")
-            new_url = st.text_input(
-                "타오바오 상품 URL", key=f"tb_url_{order['id']}_{code}",
-                placeholder="https://item.taobao.com/... 또는 https://detail.tmall.com/...",
-                help="여기 저장하면 이 상품(코드)의 모든 주문에서 위 버튼으로 열립니다. 여러 개 추가 가능.",
-            )
-            if st.button("💾 링크 추가 저장", key=f"tb_add_{order['id']}_{code}"):
-                if new_url.strip():
-                    taobao_link_repository.add(code, name, new_url, label=new_label)
-                    st.success("추가했습니다. 이 상품의 모든 주문에 적용됩니다.")
-                    st.rerun()
-                else:
-                    st.warning("URL을 입력해주세요.")
+        _render_taobao_links_for_code(code, item.get("product_name") or "", key_prefix=str(order["id"]))
 
     if not any_product:
         st.caption("이 주문에는 판매자상품코드가 없어 타오바오 링크를 연결할 수 없습니다.")
+
+
+def render_taobao_link_for_inquiry(seller_product_code: str, product_name: str, key_prefix: str) -> None:
+    """
+    상품문의 상세에서, 문의온 상품(판매자상품코드) 기준으로 타오바오 구매 링크를 보여줍니다.
+    주문이 없어도(구매 전 문의 등) 상품코드만 있으면 링크를 걸고 바로 열 수 있습니다.
+    같은 상품코드면 발송대기·주문 상세에서 저장한 링크와 그대로 공유됩니다.
+    """
+    code = str(seller_product_code or "").strip()
+    if not code:
+        st.caption("이 문의 상품에는 판매자상품코드가 없어 타오바오 링크를 연결할 수 없습니다.")
+        return
+    _render_taobao_links_for_code(code, product_name or "", key_prefix=key_prefix)
 
 
 def render_full_detail(order: dict, reveal: bool, with_cs_memo: bool = True) -> None:
