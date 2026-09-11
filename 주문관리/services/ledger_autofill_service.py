@@ -27,22 +27,16 @@ def _extract_costs(data: dict, order_qty: int):
     """배대지 신청서 응답에서 (단가CNY, 배송비원)을 뽑습니다. 없으면 None."""
     apps = data.get("appList") or []
     items = [it for a in apps for it in (a.get("appitemList") or [])]
-    total_cny = 0.0
-    total_cnt = 0
+    # 단순매입가 = 배대지 '단가(itemMoney)' 그대로. 수량은 곱하지도 나누지도 않습니다.
+    # (상품이 여러 종이면 각 단가 합산. 시트가 '단가 × 주문수량'을 따로 계산함)
+    unit_sum = 0.0
     have_item = False
     for it in items:
         money = _to_float(it.get("itemMoney"))
-        cnt = _to_float(it.get("itemCount")) or 0
         if money is not None:
             have_item = True
-            total_cnt += cnt
-            total_cny += money * (cnt or 1)
-    unit_cny = None
-    if have_item:
-        # 단순매입가 = '개당 단가'. 배대지 자기 수량(itemCount)으로 나눠 개당을 구합니다.
-        # (엑셀/주문 수량으로 나누면, 한 배대지에 여러 개 묶이고 주문은 1개씩인 경우 단가가 부풀려짐)
-        denom = total_cnt if total_cnt else (order_qty if order_qty and order_qty > 0 else 1)
-        unit_cny = round(total_cny / denom, 2)
+            unit_sum += money
+    unit_cny = round(unit_sum, 2) if have_item else None
 
     ship = None
     wl = (data.get("weightList") or [{}])
