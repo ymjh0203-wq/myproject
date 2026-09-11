@@ -353,6 +353,20 @@ def record_sync_history(
         connection.close()
 
 
+def get_cs_memo_map() -> dict:
+    """CS메모가 적힌 주문의 {market_order_id: cs_memo} 맵을 가볍게 돌려줍니다.
+    (취소/반품/교환 등 클레임 목록에서 '원주문에 CS메모 있으면 붉게' 표시할 때 씀)"""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT market_order_id, cs_memo FROM orders "
+            "WHERE cs_memo IS NOT NULL AND TRIM(cs_memo) != ''"
+        ).fetchall()
+        return {str(r["market_order_id"]): r["cs_memo"] for r in rows}
+    finally:
+        connection.close()
+
+
 def update_cs_memo(order_id: int, memo: str) -> None:
     """사용자가 직접 적은 CS메모(고객 특이사항)를 저장합니다. 메모 저장 시각(cs_memo_updated_at)도
     함께 기록해, CS메모관리 화면에서 '메모 작성일'로 보여주고 기간으로 걸러볼 수 있게 합니다.

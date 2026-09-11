@@ -2184,7 +2184,9 @@ def render_records_table(rows: list, key: str, caption: str = None) -> None:
     """
     if not rows:
         return
-    all_columns = list(rows[0].keys())
+    # 'cs_memo'는 표에 보여줄 컬럼이 아니라 '행 색칠(붉게)' 판단용이라 표시 목록에서 제외합니다.
+    _HIDDEN_KEYS = {"cs_memo"}
+    all_columns = [k for k in rows[0].keys() if k not in _HIDDEN_KEYS]
 
     # ---- 표시할 항목과 그 순서 (직접 정하면 저장되어 재시작해도 유지됩니다) ----
     saved_order_text = settings_repository.get_setting(f"column_order:{key}")
@@ -2267,7 +2269,8 @@ def render_records_table(rows: list, key: str, caption: str = None) -> None:
     def _record_detail(detail):
         st.markdown("**상세내용**")
         detail_df = pd.DataFrame(
-            [(k, str(v)) for k, v in detail.items()], columns=["항목", "값"]
+            [(k, str(v)) for k, v in detail.items() if k not in _HIDDEN_KEYS],
+            columns=["항목", "값"],
         ).set_index("항목")
         st.table(detail_df)
         # 이 건의 '원주문 상세내역'(고객·상품·주소·연락처 등)도 함께 — 발송대기 상세처럼.
@@ -2508,6 +2511,9 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             )
             return
 
+    # 원주문에 CS메모가 있으면 그 클레임 줄을 붉게 표시(샵마인처럼) — 클레임엔 cs_memo가 없어서
+    # 주문번호로 원주문의 CS메모를 붙여 넣습니다. (표 색칠은 각 행의 'cs_memo' 값으로 판단됨)
+    _cs_memo_map = order_repository.get_cs_memo_map()
     rows = [
         {
             "접수번호": c["receipt_id"],
@@ -2516,6 +2522,9 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             "주문일": (c.get("ordered_at") or "")[:10] or "-",
             "최초 주문일시": _short_date(c.get("ordered_at")) if c.get("ordered_at") else "-",
             "상점": c.get("market_account_name") or "-",
+            # 'cs_memo'는 표 색칠(붉게) 판단용. render_records_table이 표시 컬럼에서 제외하고,
+            # 행 색칠(원주문에 CS메모 있으면 붉게)에만 씁니다.
+            "cs_memo": _cs_memo_map.get(str(c.get("market_order_id"))) or "",
             "처리상태": (
                 "출고중지요청(미처리)" if _is_release_stop_pending(c)
                 else CLAIM_STATUS_LABELS.get(c["receipt_status"], c["receipt_status"] or "-")
