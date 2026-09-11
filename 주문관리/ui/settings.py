@@ -29,13 +29,13 @@ from repositories import market_repository, settings_repository
 DEFAULT_COURIER_SETTING_KEY = "default_courier_code"
 DEFAULT_COURIER_FALLBACK = "CJGLS"  # CJ대한통운
 
-# 콜센터문의(callCenterInquiries) 수집 사용 여부.
-# 2026-07 기준 이 쿠팡 API는 어떤 조회 조건으로 호출해도, 상점 3개 모두에서
-# "internal error (코드 500)"만 돌려줍니다. 켜두면 새로고침할 때마다 고칠 수
-# 없는 빨간 오류가 뜨기 때문에 기본값을 "꺼짐"으로 둡니다.
-# 쿠팡 쪽에서 해결되면 설정 화면에서 다시 켜면 됩니다.
+# 콜센터문의(callCenterInquiries=고객센터문의) 수집 사용 여부.
+# ★2026-09 실호출로 원인 확인·해결: 예전 500 오류는 쿠팡 서버 문제가 아니라 호출 조건
+#   때문이었음. (① partnerCounselingStatus는 NONE·ANSWER·NO_ANSWER·TRANSFER만 유효—"ALL"은 거부,
+#   ② 조회기간 최대 6일—넘으면 500) → coupang_client에서 상태별·6일단위로 조회하도록 고쳐 정상 동작.
+#   그래서 기본값을 "켜짐"으로 둡니다.
 CALL_CENTER_SYNC_SETTING_KEY = "collect_call_center_inquiries"
-CALL_CENTER_SYNC_DEFAULT = "off"
+CALL_CENTER_SYNC_DEFAULT = "on"
 
 
 def get_default_courier_code() -> str:
@@ -245,21 +245,20 @@ def _render_collection_settings() -> None:
     st.subheader("수집 설정")
 
     enabled = st.checkbox(
-        "콜센터문의도 함께 수집하기",
+        "고객센터문의(콜센터문의)도 함께 수집하기",
         value=is_call_center_sync_enabled(),
         key="settings_call_center_sync",
         help=(
-            "쿠팡 콜센터문의 API는 현재 어떤 조회 조건으로 호출해도 "
-            "'internal error (코드 500)'만 응답합니다. 상점 3개 모두 같은 증상이라 "
-            "쿠팡 쪽 문제로 보입니다. 켜두면 새로고침할 때마다 오류 문구가 뜨기 때문에 "
-            "기본값은 꺼짐입니다."
+            "쿠팡 고객센터문의(콜센터문의)를 CS문의 목록에 함께 수집합니다. "
+            "예전 500 오류는 호출 조건 문제였고(상태값·조회기간), 지금은 고쳐져 정상 동작합니다. "
+            "기본값은 켜짐입니다."
         ),
     )
 
     if not enabled:
         st.caption(
-            "지금은 콜센터문의를 건너뜁니다. 상품문의는 정상적으로 수집되며, "
-            "CS문의 목록에도 그대로 나옵니다."
+            "지금은 고객센터문의를 건너뜁니다. 상품문의는 정상 수집됩니다. "
+            "고객센터문의도 받으려면 위 체크 후 저장하세요."
         )
 
     if st.button("수집 설정 저장", key="settings_save_collection"):
@@ -270,8 +269,50 @@ def _render_collection_settings() -> None:
         st.rerun()
 
 
+def _render_alarm_settings() -> None:
+    from services import alarm_service
+
+    st.subheader("알람 설정")
+    st.caption(
+        "새 신규주문·취소요청·반품요청·CS문의가 들어오면 화면 맨 위에 배너와 알림음으로 "
+        "알려줍니다. 프로그램(서버)이 켜져 있는 동안 아래 주기마다 쿠팡을 자동으로 확인합니다."
+    )
+
+    enabled = st.checkbox("알람 사용", value=alarm_service.is_enabled(), key="alarm_enabled_cb")
+    sound = st.checkbox(
+        "알림음 켜기 (앱 화면)", value=alarm_service.is_sound_enabled(), key="alarm_sound_cb",
+        help="브라우저 정책상 앱을 한 번 클릭한 뒤부터 소리가 납니다.",
+    )
+    win_toast = st.checkbox(
+        "윈도우 데스크톱 알림 (오른쪽 아래 팝업, 샵마인처럼)",
+        value=alarm_service.is_win_toast_enabled(), key="alarm_win_toast_cb",
+        help="주문관리 창을 최소화하거나 다른 창을 보고 있어도, 새 건이 들어오면 화면 "
+             "오른쪽 아래에 윈도우 알림이 뜹니다. (프로그램이 켜져 있어야 합니다)",
+    )
+    if st.button("🔔 테스트 알림 보내기", key="alarm_test_toast"):
+        alarm_service.notify_windows_toast("주문관리 알림 테스트", "이 알림이 오른쪽 아래에 뜨면 정상입니다")
+        st.info("윈도우 오른쪽 아래를 확인해보세요. (안 뜨면 윈도우 '집중 지원/알림' 설정이 꺼져 있는지 확인)")
+    interval_min = st.number_input(
+        "자동 확인 주기(분)", min_value=1, max_value=60,
+        value=max(1, alarm_service.get_poll_interval() // 60), step=1, key="alarm_interval_cb",
+        help="너무 짧게 하면 쿠팡 API 호출이 잦아집니다. 기본 5분 권장.",
+    )
+
+    last_poll = alarm_service.get_last_poll_at()
+    if last_poll:
+        st.caption(f"마지막 자동 확인: {last_poll}")
+
+    if st.button("알람 설정 저장", key="alarm_settings_save"):
+        alarm_service.set_enabled(enabled)
+        alarm_service.set_sound_enabled(sound)
+        alarm_service.set_win_toast_enabled(win_toast)
+        alarm_service.set_poll_interval(int(interval_min) * 60)
+        st.success("알람 설정을 저장했습니다.")
+        st.rerun()
+
+
 def render_general() -> None:
-    """설정 · 일반 (실행 모드 / 기본 계정 키 / 발송·수집 설정 / DB)."""
+    """설정 · 일반 (실행 모드 / 기본 계정 키 / 발송·수집 설정 / 알람 / DB)."""
     st.header("설정 · 일반")
 
     st.subheader("실행 모드")
@@ -294,6 +335,9 @@ def render_general() -> None:
 
     st.divider()
     _render_collection_settings()
+
+    st.divider()
+    _render_alarm_settings()
 
     st.divider()
     st.subheader("데이터베이스")

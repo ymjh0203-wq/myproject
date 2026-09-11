@@ -290,12 +290,11 @@ def render() -> None:
     st.header("긴급/문의관리")
     st.subheader("CS문의 (상품문의 + 콜센터문의)")
     if settings.is_call_center_sync_enabled():
-        st.caption("쿠팡 상품문의와 콜센터문의를 한 곳에 모아 보여줍니다.")
+        st.caption("쿠팡 **상품문의**와 **고객센터문의(콜센터문의)**를 한 곳에 모아 보여줍니다.")
     else:
         st.caption(
-            "지금은 상품문의만 수집합니다. 쿠팡 콜센터문의 API가 계속 '내부 오류(500)'를 "
-            "응답해서 꺼둔 상태입니다. 쿠팡 오픈API 담당 쪽에서 해결되면 "
-            "설정 > 수집 설정에서 다시 켤 수 있습니다."
+            "지금은 상품문의만 수집합니다. 고객센터문의(콜센터문의)도 함께 받으려면 "
+            "**설정 > 일반 설정 > 수집 설정**에서 켜세요. (이제 정상 동작합니다)"
         )
 
     period_from, period_to = common.render_period_picker("cs_inq", "문의일(시작)", "문의일(종료)")

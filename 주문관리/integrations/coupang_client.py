@@ -1174,35 +1174,54 @@ class CoupangClient:
 
     def _fetch_real_call_center_inquiries(self, period_from, period_to) -> list:
         """
-        실제 쿠팡 오픈API로 콜센터문의를 조회합니다.
-        출처: 쿠팡 개발자센터 "Query of Coupang Contact Center Inquiries" 문서 (2026-07-20 확인)
+        실제 쿠팡 오픈API로 콜센터문의(고객센터문의)를 조회합니다.
+        출처: 쿠팡 개발자센터 "Query of Coupang Contact Center Inquiries" (2026-09 실호출 검증).
         - GET /v2/providers/openapi/apis/api/v5/vendors/{vendorId}/callCenterInquiries
-        - partnerCounselingStatus가 필수 파라미터인데, 정확한 허용값 목록을 문서에서
-          완전히 확인하지 못했습니다. "ALL"로 우선 시도합니다 - 쿠팡이 거부하면
-          CoupangApiError 메시지에 실제 허용값이 나올 가능성이 높습니다.
+        - ★실호출로 확인한 제약(이걸 어기면 쿠팡이 500 internal error를 냄):
+          ① partnerCounselingStatus 필수 + 허용값은 NONE·ANSWER·NO_ANSWER·TRANSFER 뿐
+             ("ALL"/"PROGRESS"는 거부 → 500). 상태별로 각각 조회해 합칩니다.
+          ② 조회기간은 최대 '6일 차이'(시작~끝 6일 이내). 넘으면 500 → 6일씩 잘라서 조회.
+          ③ 응답은 data.content 배열 + data.pagination(totalPages)로 페이징.
         """
         self._check_credentials()
-        date_from = (period_from or (datetime.now() - timedelta(days=1)).date()).strftime("%Y-%m-%d")
-        date_to = (period_to or datetime.now().date()).strftime("%Y-%m-%d")
+        start = period_from or (datetime.now() - timedelta(days=1)).date()
+        end = period_to or datetime.now().date()
         path = CALL_CENTER_INQUIRIES_PATH_TEMPLATE.format(vendor_id=self.vendor_id)
 
-        all_inquiries = []
-        page_num = 1
-        while True:
-            params = {
-                "partnerCounselingStatus": "ALL",
-                "inquiryStartAt": date_from,
-                "inquiryEndAt": date_to,
-                "pageNum": page_num,
-                "pageSize": 30,
-            }
-            body = self._request("GET", path, params)
-            raw_items = body.get("data") or []
-            all_inquiries.extend(self._convert_real_call_center_inquiry(raw) for raw in raw_items)
+        statuses = ["NONE", "ANSWER", "NO_ANSWER", "TRANSFER"]
+        window = timedelta(days=6)  # 쿠팡 최대 조회범위(시작~끝 6일 이내)
 
-            if len(raw_items) < 30:
-                break
-            page_num += 1
+        seen = set()
+        all_inquiries = []
+        win_start = start
+        while win_start <= end:
+            win_end = min(win_start + window, end)
+            d_from = win_start.strftime("%Y-%m-%d")
+            d_to = win_end.strftime("%Y-%m-%d")
+            for status in statuses:
+                page_num = 1
+                while True:
+                    params = {
+                        "partnerCounselingStatus": status,
+                        "inquiryStartAt": d_from,
+                        "inquiryEndAt": d_to,
+                        "pageNum": page_num,
+                        "pageSize": 50,
+                    }
+                    body = self._request("GET", path, params)
+                    data = body.get("data") or {}
+                    raw_items = data.get("content") or []
+                    for raw in raw_items:
+                        iid = str(raw.get("inquiryId") or "")
+                        if iid and iid not in seen:
+                            seen.add(iid)
+                            all_inquiries.append(self._convert_real_call_center_inquiry(raw))
+                    pagination = data.get("pagination") or {}
+                    total_pages = pagination.get("totalPages") or 0
+                    if page_num >= total_pages or not raw_items:
+                        break
+                    page_num += 1
+            win_start = win_end + timedelta(days=1)
 
         return all_inquiries
 
