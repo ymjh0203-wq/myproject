@@ -147,13 +147,16 @@ def _count_for_key(key: str, base: str) -> int:
             (base,),
         )
     if key == "cs":
-        # CS문의: 상품문의(미답변) + 콜센터문의, base 이후 새로 수집된 건
+        # CS문의: '답변이 필요한' 것만 셉니다(완료·답변완료 제외 → 알람이 과하게 안 뜨게).
+        #   - 상품문의: 미답변(answered=0)
+        #   - 콜센터문의: 판매자 답변 필요(partner_counseling_status='requestAnswer')
         return _count(
             "SELECT COUNT(*) FROM product_inquiries "
             "WHERE first_collected_at > ? AND (answered IS NULL OR answered = 0)",
             (base,),
         ) + _count(
-            "SELECT COUNT(*) FROM call_center_inquiries WHERE first_collected_at > ?",
+            "SELECT COUNT(*) FROM call_center_inquiries "
+            "WHERE first_collected_at > ? AND partner_counseling_status = 'requestAnswer'",
             (base,),
         )
     return 0

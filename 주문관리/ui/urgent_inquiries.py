@@ -18,6 +18,16 @@ from repositories import inquiry_repository, order_repository, product_link_repo
 from services import claims_sync_service, product_link_service
 from ui import common, settings
 
+# 콜센터문의 상태값(영문) → 한글 표시. (partner_counseling_status / inquiry_status 공통)
+_CALLCENTER_STATUS_KO = {
+    "requestAnswer": "답변 필요",
+    "answered": "답변완료",
+    "none": "미상담",
+    "progress": "진행중",
+    "complete": "완료",
+    "transfer": "이관",
+}
+
 
 def _render_answer_form(detail: dict) -> None:
     """
@@ -261,7 +271,11 @@ def _unified_rows() -> list:
             }
         )
     for i in inquiry_repository.list_call_center_inquiries():
-        status = i["inquiry_status"] or "-"
+        # 처리상태: 판매자 답변 필요 여부(partner_counseling_status)를 한글로 보여줍니다.
+        _pcs = (i.get("partner_counseling_status") or "").strip()
+        _needs = _pcs == "requestAnswer"
+        _status_ko = _CALLCENTER_STATUS_KO.get(_pcs) or _CALLCENTER_STATUS_KO.get(
+            (i.get("inquiry_status") or "").strip()) or (_pcs or "-")
         rows.append(
             {
                 "문의종류": "콜센터문의",
@@ -272,12 +286,12 @@ def _unified_rows() -> list:
                 "옵션": "-",
                 "상품/주문번호": i["market_order_id"] or "-",
                 "내용": i["content"] or "-",
-                "처리상태": status,
+                "처리상태": _status_ko,
                 "전화번호": i["buyer_phone"] or "-",
                 "문의일시": i["inquiry_at"] or "-",
-                "_needs_action": "COMPLETE" not in status.upper(),
+                "_needs_action": _needs,
                 "_row_id": None,
-                "_answered": "COMPLETE" in status.upper(),
+                "_answered": not _needs,
                 "_answer_content": "",
             }
         )
