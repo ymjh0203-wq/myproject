@@ -2317,6 +2317,13 @@ def _is_release_stop_pending(claim: dict) -> bool:
     return (claim.get("release_stop_status") or "") == RELEASE_STOP_PENDING
 
 
+def _is_release_stop_done(claim: dict) -> bool:
+    """'출고중지 완료'(발송 전 출고중지로 처리된 건). release_stop_status에 '출고중지'가 든 값
+    (예: '처리(출고중지)'). 이건 실제 환불/반품이 아니라 취소라, 환불완료 목록에서 뺍니다.
+    ('비대상'·'처리(불가)'는 실제로 발송됐다가 반품된 것이라 포함합니다.)"""
+    return "출고중지" in (claim.get("release_stop_status") or "")
+
+
 def _is_release_stop(claim: dict) -> bool:
     """'출고중지요청'(사실상 '취소') 여부 → 반품이 아니라 취소로 분류합니다.
     미처리 출고중지(releaseStopStatus=미처리) 또는 옛 RELEASE_STOP_* 상태를 포함합니다."""
@@ -2379,6 +2386,9 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
     #   반품주문 = 반품 클레임에서 출고중지 '제외' / 취소주문 = 취소 클레임 + 출고중지(반품으로 저장된 것 '포함').
     if claim_type == "RETURN":
         claims = [c for c in claims_repository.list_claims("RETURN") if not _is_release_stop(c)]
+        # 환불완료(반품완료) 화면: '출고중지 완료'(발송 전 취소된 것)는 진짜 환불이 아니라 제외.
+        if only_completed:
+            claims = [c for c in claims if not _is_release_stop_done(c)]
     else:
         claims = claims_repository.list_claims("CANCEL") + [
             c for c in claims_repository.list_claims("RETURN") if _is_release_stop(c)
