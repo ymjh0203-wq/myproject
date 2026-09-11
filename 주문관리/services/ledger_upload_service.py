@@ -73,8 +73,11 @@ def _extract_costs(data: dict, qty: int):
             total_cny += money * (cnt or 1)
     unit = None
     if have:
-        q = qty if qty and qty > 0 else 1
-        unit = round(total_cny / q, 2)
+        # ★단순매입가는 '개당 단가'입니다. 배대지 '자기 수량(itemCount)'으로 나눠야 개당 단가가 됩니다.
+        #   (예전엔 엑셀 주문수량으로 나눠서, 한 배대지에 여러 개가 묶이고 쿠팡 주문은 1개씩인
+        #    경우 단가가 총액으로 부풀려졌음. 시트가 '단가 × 주문수량'을 하므로 개당이 맞음)
+        denom = total_cnt if total_cnt else (qty if qty and qty > 0 else 1)
+        unit = round(total_cny / denom, 2)
     ship = None
     wl = data.get("weightList") or [{}]
     if wl:
