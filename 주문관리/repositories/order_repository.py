@@ -1024,21 +1024,23 @@ def close_active_orders_with_completed_claims() -> int:
 
 
 def close_delivered_orders_with_returns() -> int:
-    """배송완료 주문 중 '반품 클레임'(신청·완료 무관)이 있는 건을 '주문종료'로 정리합니다.
-    쿠팡처럼 반품신청이 오면(또는 바로 환불완료돼도) 배송완료 목록에서 빠지게 합니다.
+    """배송완료·구매확정 주문 중 '반품 클레임'(신청·완료 무관)이 있는 건을 '주문종료'로 정리합니다.
+    쿠팡처럼 반품신청이 오면(또는 바로 환불완료돼도) 배송완료/구매확정(판매) 목록에서 빠지게 합니다.
+    → 반품/환불된 건이 배송완료·판매(구매확정)로 잘못 남지 않고, 반품완료에서만 보입니다.
     (반품 클레임 상태는 실측상 RETURNS_UNCHECKED=반품접수 / RETURNS_COMPLETED=환불완료 뿐이라
      둘 다 '실제 반품'이므로 그대로 종료 처리합니다.) 정리한 건수를 돌려줍니다."""
+    targets = (models.WORK_STATUS_DELIVERED, models.WORK_STATUS_PURCHASE_CONFIRMED)
     connection = get_connection()
     try:
         rows = connection.execute(
-            """
+            f"""
             SELECT DISTINCT orders.id
             FROM orders
             JOIN claims ON claims.market_order_id = orders.market_order_id
-            WHERE orders.work_status = ?
+            WHERE orders.work_status IN ({",".join("?" for _ in targets)})
               AND claims.claim_type = 'RETURN'
             """,
-            (models.WORK_STATUS_DELIVERED,),
+            targets,
         ).fetchall()
         order_ids = [r["id"] for r in rows]
     finally:

@@ -2324,6 +2324,14 @@ def _is_release_stop_done(claim: dict) -> bool:
     return "출고중지" in (claim.get("release_stop_status") or "")
 
 
+def _is_withdrawn_return(claim: dict) -> bool:
+    """'고객 철회(반품 취소)' 여부. 쿠팡 반품목록에서 사라지면 앱이 완료로 보정하는데,
+    완료건은 목록에 남고 '사라진 것 = 철회'라, complete_confirm_type='NOT_IN_COUPANG_LIST'는
+    실제 환불이 아니라 철회입니다. → 환불완료(진짜 반품/환불) 집계에서 제외합니다.
+    (진짜 환불 완료는 CS_CONFIRM / VENDOR_CONFIRM 로 확인됩니다.)"""
+    return (claim.get("complete_confirm_type") or "") == "NOT_IN_COUPANG_LIST"
+
+
 def _is_release_stop(claim: dict) -> bool:
     """'출고중지요청'(사실상 '취소') 여부 → 반품이 아니라 취소로 분류합니다.
     미처리 출고중지(releaseStopStatus=미처리) 또는 옛 RELEASE_STOP_* 상태를 포함합니다."""
@@ -2386,9 +2394,11 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
     #   반품주문 = 반품 클레임에서 출고중지 '제외' / 취소주문 = 취소 클레임 + 출고중지(반품으로 저장된 것 '포함').
     if claim_type == "RETURN":
         claims = [c for c in claims_repository.list_claims("RETURN") if not _is_release_stop(c)]
-        # 환불완료(반품완료) 화면: '출고중지 완료'(발송 전 취소된 것)는 진짜 환불이 아니라 제외.
+        # 환불완료(반품완료) 화면: 진짜 반품/환불만 남깁니다.
+        #   - '출고중지 완료'(발송 전 취소된 것) 제외
+        #   - '고객 철회'(쿠팡 목록에서 사라짐=NOT_IN_COUPANG_LIST) 제외 → 환불 아님
         if only_completed:
-            claims = [c for c in claims if not _is_release_stop_done(c)]
+            claims = [c for c in claims if not _is_release_stop_done(c) and not _is_withdrawn_return(c)]
     else:
         claims = claims_repository.list_claims("CANCEL") + [
             c for c in claims_repository.list_claims("RETURN") if _is_release_stop(c)

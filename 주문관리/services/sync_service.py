@@ -500,13 +500,14 @@ def advance_settled_orders(recognition_days: int = 45, progress=None) -> dict:
 
 
 def close_returned_active_orders() -> dict:
-    """반품/취소로 정리돼야 할 주문을 '주문종료'로 옮깁니다. (쿠팡 실제 상태와 맞추기)
-      ① 활성(신규주문/발송대기/배송중) 주문 중 '반품·취소 완료'된 건.
-      ② 배송완료 주문 중 '반품 클레임(신청·완료 무관)'이 있는 건 → 쿠팡처럼 배송완료에서 제거.
+    """활성(신규주문/발송대기/배송중) 주문 중 '반품·취소 완료'된 건을 주문종료로 정리합니다.
+    (반품/취소가 끝났는데 앱엔 아직 배송중 등으로 남던 데이터 불일치를 없앱니다.)
+    ※ 배송완료/구매확정은 건드리지 않습니다 — 쿠팡은 반품완료돼도 '배송완료(FINAL_DELIVERY)'
+      상태를 유지하기 때문입니다(배송상태와 반품은 별개). 그래서 반품이력이 있어도 배송완료/
+      구매확정에 그대로 둡니다.
     반환: {status, closed_count, error_message}"""
     try:
         n = order_repository.close_active_orders_with_completed_claims()
-        n += order_repository.close_delivered_orders_with_returns()
         return {"status": "success", "closed_count": n, "error_message": None}
     except Exception as error:  # noqa: BLE001
         return {"status": "fail", "closed_count": 0, "error_message": str(error)}
