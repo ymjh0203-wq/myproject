@@ -217,20 +217,26 @@ with st.container(horizontal=True):
                 st.session_state["current_view"] = name
                 st.query_params["view"] = name
                 st.rerun()
-    # ⚙ 탭 순서 바꾸기(드래그) — 탭을 좌우로 끌어 순서를 바꾸면 자동 저장됩니다.
-    with st.popover("⚙ 탭순서"):
-        st.caption("아래 탭을 좌우로 **끌어서** 순서를 바꾸세요. 바꾸면 자동 저장되고, 위 탭줄에 바로 반영됩니다.")
-        try:
-            from streamlit_sortables import sort_items
-            _new_order = sort_items(_nav_order, direction="horizontal", key="nav_sort_items")
-            if _new_order and list(_new_order) != list(_nav_order):
-                settings_repository.set_setting("nav_stage_order", "|".join(_new_order))
-                st.rerun()
-        except Exception:  # noqa: BLE001
-            st.caption("탭 순서 편집 도구를 불러오지 못했습니다. (streamlit-sortables 설치 필요)")
-        if st.button("기본 순서로 되돌리기", key="nav_order_reset"):
-            settings_repository.set_setting("nav_stage_order", "|".join(FLAT_STAGES))
+
+# ---- 탭 순서 바꾸기(드래그) ----
+# ★위의 '진짜 탭 버튼'은 Streamlit 기본 위젯이라 마우스로 직접 못 끕니다(보안상 컴포넌트가
+#   상위 페이지를 못 건드림). 그래서 바로 아래에 '드래그 전용 줄'을 항상 보이게 두고, 여기서
+#   탭 이름을 좌우로 끌면 순서가 저장되어 위 탭줄에 바로 반영됩니다. (팝오버 안 열어도 됨)
+_show_reorder = st.toggle("🖱 탭 순서 바꾸기", value=False, key="nav_reorder_toggle",
+                          help="켜면 아래에 드래그 줄이 나옵니다. 탭을 좌우로 끌어 순서를 바꾸세요(자동 저장).")
+if _show_reorder:
+    try:
+        from streamlit_sortables import sort_items
+        st.caption("↔ 아래 탭을 **좌우로 끌어** 순서를 바꾸세요. 바꾸면 자동 저장되고 위 탭줄에 바로 반영됩니다.")
+        _new_order = sort_items(_nav_order, direction="horizontal", key="nav_sort_items")
+        if _new_order and list(_new_order) != list(_nav_order):
+            settings_repository.set_setting("nav_stage_order", "|".join(_new_order))
             st.rerun()
+    except Exception:  # noqa: BLE001
+        st.caption("탭 순서 편집 도구를 불러오지 못했습니다. (streamlit-sortables 설치 필요)")
+    if st.button("기본 순서로 되돌리기", key="nav_order_reset"):
+        settings_repository.set_setting("nav_stage_order", "|".join(FLAT_STAGES))
+        st.rerun()
 
 st.divider()
 
