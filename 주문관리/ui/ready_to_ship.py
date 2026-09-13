@@ -641,14 +641,6 @@ def render() -> None:
         primary_label="🚚 발송처리",
         primary_help="표에 입력한 택배사·송장번호를 쿠팡에 등록하고 배송중으로 넘깁니다.",
     )
-    # ★통관검증 '불가'(공식검증 불일치·미검증) 건도 강제로 발송처리하고 싶을 때 켭니다.
-    #   (원래는 불가 건을 막지만, 사장님이 직접 확인하고 그냥 보낼 때 사용)
-    _force_ship = st.checkbox(
-        "통관검증 '불가' 건도 강제 발송처리",
-        value=False, key="rts_force_ship",
-        help="공식검증 불일치/미검증이라 막혀 있던 주문도 송장을 등록해 발송처리합니다. "
-             "통관정보 불일치로 배송·통관 문제가 날 수 있으니 확인 후 사용하세요.",
-    )
 
     # 정렬(주문일 오름차순 등) — 고른 정렬을 DB에 저장해, 다른 단계 갔다 와도/앱 껐다 켜도 유지됩니다.
     _sort_options = [c for c in ["주문일(약식)", "수령자", "주문번호", "통관검증 상태", "발송 가능 여부", "상품명"]
@@ -932,7 +924,7 @@ def render() -> None:
     # 발송처리: 표 안 택배사·송장번호로 쿠팡 송장 등록 → 배송중.
     if do_ship:
         rows_to_ship = []
-        typed_but_not_shippable = 0  # 송장은 넣었지만 통관검증 미통과라 발송 못 하는 건수
+        blocked_rows = []  # 송장은 넣었지만 통관검증 미통과(불가)라 원래는 발송 못 하는 건
         for r in records:
             try:
                 idx = int(r.get(aggrid_table.IDX_COL))
@@ -956,19 +948,35 @@ def render() -> None:
                 continue
             if order["work_status"] != models.WORK_STATUS_READY_TO_SHIP:
                 continue
-            # 통관검증 미통과(불가)면 기본은 막지만, '강제 발송처리' 체크 시 그대로 보냅니다.
-            if not _force_ship and (order["shipping"] or {}).get("validation_status") not in models.SHIPPABLE_VALIDATION_STATUSES:
-                typed_but_not_shippable += 1
-                continue
-            rows_to_ship.append({"order": order, "택배사코드": courier_code, "송장번호": invoice})
-        if not rows_to_ship:
-            if typed_but_not_shippable:
-                st.warning(
-                    "송장을 입력한 주문이 아직 **통관검증을 통과하지 못했습니다**. "
-                    "먼저 '관세청 공식검증'을 통과(공식검증 완료)시켜야 발송할 수 있습니다. "
-                    "(현재 '미검증'·'불일치' 주문은 발송 불가)"
-                )
+            _row = {"order": order, "택배사코드": courier_code, "송장번호": invoice}
+            # 통관검증 미통과(불가)는 따로 모아둠 → 아래 '그래도 강제 발송처리' 버튼으로 보낼 수 있게.
+            if (order["shipping"] or {}).get("validation_status") not in models.SHIPPABLE_VALIDATION_STATUSES:
+                blocked_rows.append(_row)
             else:
-                st.warning("발송할 주문의 **택배사와 송장번호**를 표에 직접 입력해주세요. (송장번호가 '-'이면 아직 입력 안 된 상태입니다)")
-        else:
+                rows_to_ship.append(_row)
+        if rows_to_ship:
+            st.session_state.pop("rts_blocked_ship", None)
             _confirm_bulk_register_invoice(rows_to_ship)
+        elif blocked_rows:
+            # 불가 건만 있음 → 경고 + 강제 발송 대기목록 저장(아래 버튼에서 처리).
+            st.session_state["rts_blocked_ship"] = blocked_rows
+        else:
+            st.warning("발송할 주문의 **택배사와 송장번호**를 표에 직접 입력해주세요. (송장번호가 '-'이면 아직 입력 안 된 상태입니다)")
+
+    # 통관검증 '불가'인데 송장을 넣은 건 → '그래도 강제 발송처리' 버튼(발송처리 눌렀을 때 대기목록에 담김).
+    _blocked = st.session_state.get("rts_blocked_ship")
+    if _blocked:
+        st.warning(
+            f"통관검증 **불가**(공식검증 불일치·미검증) **{len(_blocked)}건**은 원래 발송 불가입니다. "
+            "먼저 '관세청 공식검증'을 통과시키는 게 안전하지만, 그냥 보내려면 아래 버튼을 누르세요."
+        )
+        _fc1, _fc2 = st.columns([2, 1])
+        with _fc1:
+            if st.button(f"⚠️ 그래도 이 {len(_blocked)}건 강제 발송처리", type="primary", width="stretch", key="rts_force_ship_now"):
+                _rows = st.session_state.pop("rts_blocked_ship", None) or []
+                if _rows:
+                    _confirm_bulk_register_invoice(_rows)
+        with _fc2:
+            if st.button("취소", width="stretch", key="rts_force_ship_cancel"):
+                st.session_state.pop("rts_blocked_ship", None)
+                st.rerun()
