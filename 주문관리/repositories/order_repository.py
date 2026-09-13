@@ -1023,6 +1023,32 @@ def close_active_orders_with_completed_claims() -> int:
     return len(order_ids)
 
 
+def close_delivered_orders_with_returns() -> int:
+    """배송완료 주문 중 '반품 클레임'(신청·완료 무관)이 있는 건을 '주문종료'로 정리합니다.
+    쿠팡처럼 반품신청이 오면(또는 바로 환불완료돼도) 배송완료 목록에서 빠지게 합니다.
+    (반품 클레임 상태는 실측상 RETURNS_UNCHECKED=반품접수 / RETURNS_COMPLETED=환불완료 뿐이라
+     둘 다 '실제 반품'이므로 그대로 종료 처리합니다.) 정리한 건수를 돌려줍니다."""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT DISTINCT orders.id
+            FROM orders
+            JOIN claims ON claims.market_order_id = orders.market_order_id
+            WHERE orders.work_status = ?
+              AND claims.claim_type = 'RETURN'
+            """,
+            (models.WORK_STATUS_DELIVERED,),
+        ).fetchall()
+        order_ids = [r["id"] for r in rows]
+    finally:
+        connection.close()
+
+    for order_id in order_ids:
+        update_work_status(order_id, models.WORK_STATUS_CLOSED, changed_by="auto-close-returned-delivered")
+    return len(order_ids)
+
+
 def update_work_status(order_id: int, new_status: str, changed_by: str = "manual") -> None:
     """주문의 내부 작업 상태를 바꾸고, 변경 이력을 함께 남깁니다."""
     connection = get_connection()
