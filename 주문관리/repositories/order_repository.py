@@ -353,6 +353,19 @@ def record_sync_history(
         connection.close()
 
 
+def set_cs_memo_done(order_id: int, done: bool) -> None:
+    """CS메모 '처리완료' 표시를 켜고 끕니다. (완료=1 → CS메모관리 목록에서 초록색)"""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE orders SET cs_memo_done = ?, last_updated_at = ? WHERE id = ?",
+            (1 if done else 0, _now(), order_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def get_cs_memo_map() -> dict:
     """CS메모가 적힌 주문의 {market_order_id: cs_memo} 맵을 가볍게 돌려줍니다.
     (취소/반품/교환 등 클레임 목록에서 '원주문에 CS메모 있으면 붉게' 표시할 때 씀)"""

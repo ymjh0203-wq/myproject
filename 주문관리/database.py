@@ -412,6 +412,7 @@ ADDITIONAL_COLUMNS = {
         ("quickstar_submitted_at", "TEXT"),
         ("cs_memo", "TEXT"),
         ("cs_memo_updated_at", "TEXT"),  # CS메모를 마지막으로 저장한 시각(메모 전용 날짜)
+        ("cs_memo_done", "INTEGER"),     # CS메모 처리완료 여부(1=완료 → 목록에서 초록색)
     ],
     "order_items": [
         ("seller_product_code", "TEXT"),

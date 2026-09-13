@@ -28,6 +28,8 @@ BTN_CLICK_COL = "__btn_click"
 CS_FLAG_COL = "__has_cs"
 # 주문수량이 2개 이상인 주문을 줄 전체 파랗게 표시하기 위한 숨김 플래그 컬럼
 QTY_FLAG_COL = "__qty2"
+# CS메모가 '처리완료'된 주문을 줄 전체 초록색으로 표시하기 위한 숨김 플래그 컬럼
+CS_DONE_COL = "__cs_done"
 
 # 특정 컬럼을 '줄마다 버튼'으로 렌더합니다. 값이 'GR'로 시작하면(접수됨) 초록 글씨,
 # 아니면 '퀵스타 연동' 버튼. 버튼 클릭 시 그 행의 _idx를 숨김 컬럼(__btn_click)에 넣어
@@ -86,7 +88,7 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
     #   그 저장 순서로 df 컬럼을 재정렬합니다. → 어느 화면이든(발송대기/취소/반품 등 호출부가
     #   df를 자기 순서로 넘겨도) 저장된 드래그 순서가 최종적으로 이깁니다. (예전엔 호출부가
     #   넘긴 순서를 그대로 써서, 드래그해도 다음 렌더에 원래대로 되돌아갔음)
-    system_cols = {IDX_COL, CS_FLAG_COL, QTY_FLAG_COL, BTN_CLICK_COL}
+    system_cols = {IDX_COL, CS_FLAG_COL, QTY_FLAG_COL, CS_DONE_COL, BTN_CLICK_COL}
     _saved_order = settings_repository.get_setting(f"column_order:{key}")
     if _saved_order:
         _want = [c for c in _saved_order.split("|") if c in grid_df.columns and c != IDX_COL]
@@ -102,8 +104,10 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
 
     # CS메모가 있는 주문 → 줄 전체를 붉게(샵마인처럼). 숨김 플래그 컬럼으로 판단.
     # (표시 컬럼에서 CS메모를 빼도 항상 붉게 표시되도록 별도 숨김 컬럼을 씁니다)
+    # CS메모가 '처리완료'면 붉은색 대신 초록색으로 표시합니다(__cs_done).
     if len(orders) == len(grid_df):
         grid_df[CS_FLAG_COL] = [1 if str((o or {}).get("cs_memo") or "").strip() else 0 for o in orders]
+        grid_df[CS_DONE_COL] = [1 if (o or {}).get("cs_memo_done") else 0 for o in orders]
 
     # 주문수량 2개 이상 → 줄 전체를 파랗게. '수량' 컬럼이 있으면 그 값, 없으면 주문 items 합으로 판단.
     def _qty2_flag(o, row):
@@ -179,6 +183,8 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
         gb.configure_column(CS_FLAG_COL, hide=True)
     if QTY_FLAG_COL in grid_df.columns:
         gb.configure_column(QTY_FLAG_COL, hide=True)
+    if CS_DONE_COL in grid_df.columns:
+        gb.configure_column(CS_DONE_COL, hide=True)
     # 'No' 컬럼에 체크박스 + 머리글 전체선택 + 행 드래그 핸들(왼쪽 고정).
     if "No" in grid_df.columns:
         gb.configure_column(
@@ -195,9 +201,10 @@ def render_orders_grid(df: pd.DataFrame, key: str, orders: list, editable: dict 
                 gb.configure_column(col, editable=True, minWidth=140, **cfg)
     # enableCellTextSelection: 표 안 글자를 마우스로 드래그해 선택하고 Ctrl+C로 복사할 수 있게
     # 합니다(일반 웹페이지처럼). ensureDomOrder와 함께 써야 선택 순서가 화면 순서대로 됩니다.
-    # 줄 전체 색: CS메모 있으면 붉게(우선), 없고 주문수량 2개 이상이면 파랗게.
+    # 줄 전체 색: CS메모 '처리완료'면 초록(최우선) → CS메모 있으면 붉게 → 주문수량 2개↑면 파랗게.
     _row_style = JsCode(
         "function(params){ if (params.data) {"
+        " if (params.data['__cs_done']) return { color: '#2E7D32', fontWeight: '600' };"
         " if (params.data['__has_cs']) return { color: '#D32F2F', fontWeight: '600' };"
         " if (params.data['__qty2']) return { color: '#1565C0', fontWeight: '600' };"
         " } return null; }"
