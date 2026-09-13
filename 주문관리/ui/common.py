@@ -2370,6 +2370,16 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
         collect_from = min(period_from, collect_to)
         with st.spinner(f"쿠팡에서 {title}을(를) 가져오는 중입니다..."):
             result = claims_sync_service.sync_claims(claim_type, collect_from, collect_to)
+            # ★취소주문 화면엔 '출고중지요청'(쿠팡에선 RETURN으로 저장) 건이 섞여 표시됩니다.
+            #   그래서 CANCEL만 수집하면 그 출고중지 건들의 최신 상태(예: 출고중지완료 처리됨)가
+            #   갱신되지 않습니다. 취소주문 수집 시 RETURN도 함께 수집해 최신 상태를 반영합니다.
+            if claim_type == "CANCEL":
+                _r2 = claims_sync_service.sync_claims("RETURN", collect_from, collect_to)
+                if _r2.get("status") != "fail":
+                    for _k in ("fetched_count", "new_count", "updated_count", "reconciled_count"):
+                        result[_k] = (result.get(_k) or 0) + (_r2.get(_k) or 0)
+                else:
+                    result["error_count"] = (result.get("error_count") or 0) + 1
         if result["status"] == "fail":
             st.error(f"수집 실패: {result['error_message']}")
         else:
