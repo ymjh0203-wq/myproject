@@ -1664,24 +1664,40 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
     if editable:
         try:
             _recs = _edited_df.to_dict("records")
-            if _recs:
-                _prev = st.session_state.get(f"{key}_edited_records", []) or []
-                _by_moid = {str(r.get("주문번호")): r for r in _prev}
-                _edit_cols = list(editable.keys())
-                _changed = False
-                for _r in _recs:
-                    _mo = str(_r.get("주문번호"))
-                    _old = _by_moid.get(_mo)
-                    # 이미 저장된 값과 편집컬럼이 달라지면 '방금 사용자가 고침'으로 봅니다.
-                    if _old is not None and any(str(_old.get(c)) != str(_r.get(c)) for c in _edit_cols):
+            _edit_cols = list(editable.keys())
+            # ★'수정 대기'에는 사용자가 실제로 고친 행만 담습니다. 표에 처음 뜬 원본값
+            #   (sorted_rows=build_full_row)과 다른 값이면 '고침'으로 봅니다. (예전엔 표의 모든
+            #   행을 담아, 안 고친 것까지 '수정 대기'에 잡히던 문제 수정)
+            _orig_by_moid = {}
+            for _row in (sorted_rows or []):
+                _mo0 = str(_row.get("주문번호") or "").strip()
+                if _mo0:
+                    _orig_by_moid[_mo0] = {c: _row.get(c) for c in _edit_cols}
+            _prev = st.session_state.get(f"{key}_edited_records", []) or []
+            _by_moid = {str(r.get("주문번호")): r for r in _prev}
+            _changed = False
+            for _r in _recs:
+                _mo = str(_r.get("주문번호"))
+                _orig = _orig_by_moid.get(_mo)
+                # 편집컬럼 중 하나라도 '값이 있고(빈칸/-/nan 아님) 원본과 다르면' 사용자가 고친 것.
+                _is_edit = _orig is not None and any(
+                    str(_r.get(c) or "").strip() not in ("", "-", "nan")
+                    and str(_r.get(c)).strip() != str(_orig.get(c) or "").strip()
+                    for c in _edit_cols
+                )
+                if _is_edit:
+                    if _by_moid.get(_mo) != _r:
                         _changed = True
                     _by_moid[_mo] = _r
-                st.session_state[f"{key}_edited_records"] = list(_by_moid.values())
-                # ★이 표는 @st.fragment 라, 셀을 고쳐도 표 '밖'(위쪽 '수정 대기' 등)은
-                #   안 갱신됩니다. 편집이 실제로 생기면 전체 리런을 한 번 해서 바깥도 갱신합니다.
-                #   (같은 값이면 리런 안 함 → 무한루프 없음)
-                if _changed:
-                    st.rerun()
+                elif _mo in _by_moid:
+                    # 원본과 같아짐(=편집 안 했거나 되돌림) → 대기목록에서 뺍니다.
+                    del _by_moid[_mo]
+                    _changed = True
+            st.session_state[f"{key}_edited_records"] = list(_by_moid.values())
+            # ★이 표는 @st.fragment 라, 셀을 고쳐도 표 '밖'(위쪽 '수정 대기' 등)은 안 갱신됩니다.
+            #   편집이 실제로 생기면 전체 리런을 한 번 해서 바깥도 갱신합니다.(같으면 리런 안 함)
+            if _changed:
+                st.rerun()
         except Exception:  # noqa: BLE001
             pass
     target = pick_detail_target(selected, key) if show_detail else None

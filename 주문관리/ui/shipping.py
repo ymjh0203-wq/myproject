@@ -70,31 +70,22 @@ def _invoice_change_dialog(key: str = "shipping") -> None:
     표에서 고친 택배사·송장번호를 모아 보여주고, 버튼 한 번으로 여러 건을 쿠팡에 실제
     반영합니다. (배송중 화면 상단 '🚚 운송장 변경' 버튼으로 열립니다.)
     """
+    # ★검색을 바꿔가며 여러 건을 고쳐도, 실제로 고친 건들이 '수정 대기'에 누적됩니다.
+    #   (체크는 검색하면 풀려서, 반영 기준으로 쓰지 않고 '고친 것 전체'를 반영합니다.)
     pending = _collect_invoice_pending(key)
-    # ★표 왼쪽 체크박스로 고른 행이 있으면 '그 행들만' 반영합니다. (체크 3건인데 수정 대기
-    #   전체가 반영되던 문제 수정) 체크한 게 없을 때만 수정 대기 전체를 반영합니다.
-    selected = st.session_state.get(f"{key}_selected_orders", []) or []
-    sel_moids = {str(o.get("market_order_id")) for o in selected}
-    if sel_moids:
-        pending = [p for p in pending if str(p[0].get("market_order_id")) in sel_moids]
-        scope_note = f"표에서 **체크한 {len(sel_moids)}건** 중, 송장을 고친 건만 반영합니다."
-    else:
-        scope_note = ("체크한 행이 없어 **송장을 고친 전체**를 반영합니다. "
-                      "특정 건만 하려면 창을 닫고 표 왼쪽 체크박스로 고른 뒤 다시 누르세요.")
 
     if not pending:
         st.info(
             "반영할 송장이 없습니다.\n\n"
-            + ("체크한 행에는 바뀐 송장이 없습니다. 표에서 **택배사·송장번호 칸을 고친** 행을 체크해주세요."
-               if sel_moids else
-               "먼저 표에서 **택배사·송장번호 칸을 직접 고친 뒤** 이 버튼을 눌러주세요."),
+            "먼저 표에서 **택배사·송장번호 칸을 직접 고친 뒤** 이 버튼을 눌러주세요. "
+            "(검색을 바꿔가며 여러 건을 고쳐도 고친 건들이 여기 모입니다.)",
             icon="✏️",
         )
         if st.button("닫기", width="stretch"):
             st.rerun()
         return
 
-    st.caption(scope_note)
+    st.caption("표에서 **송장을 고친 건 전부**를 반영합니다. (검색을 바꿔가며 고친 것도 모두 포함)")
     st.markdown(f"**아래 {len(pending)}건을 쿠팡에 실제 반영합니다.**")
     for o, _code, _inv, _cname in pending[:30]:
         _rcv = (o.get("shipping") or {}).get("receiver_name") or o.get("orderer_name") or "-"
