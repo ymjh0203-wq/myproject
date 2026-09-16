@@ -1668,35 +1668,40 @@ def _render_table_with_fragment(key, summary_columns, sorted_rows, sorted_orders
             # ★'수정 대기'에는 사용자가 실제로 고친 행만 담습니다. 표에 처음 뜬 원본값
             #   (sorted_rows=build_full_row)과 다른 값이면 '고침'으로 봅니다. (예전엔 표의 모든
             #   행을 담아, 안 고친 것까지 '수정 대기'에 잡히던 문제 수정)
+            def _norm(v):
+                return str(v if v is not None else "").strip()
             _orig_by_moid = {}
             for _row in (sorted_rows or []):
                 _mo0 = str(_row.get("주문번호") or "").strip()
                 if _mo0:
-                    _orig_by_moid[_mo0] = {c: _row.get(c) for c in _edit_cols}
-            _prev = st.session_state.get(f"{key}_edited_records", []) or []
-            _by_moid = {str(r.get("주문번호")): r for r in _prev}
-            _changed = False
+                    _orig_by_moid[_mo0] = {c: _norm(_row.get(c)) for c in _edit_cols}
+            # 현재 표에서 '실제로 고친 행'만 주문번호 기준으로 모읍니다(원본과 다른 값).
+            _by_moid = {}
             for _r in _recs:
-                _mo = str(_r.get("주문번호"))
+                _mo = str(_r.get("주문번호") or "").strip()
+                if not _mo:
+                    continue
                 _orig = _orig_by_moid.get(_mo)
-                # 편집컬럼 중 하나라도 '값이 있고(빈칸/-/nan 아님) 원본과 다르면' 사용자가 고친 것.
                 _is_edit = _orig is not None and any(
-                    str(_r.get(c) or "").strip() not in ("", "-", "nan")
-                    and str(_r.get(c)).strip() != str(_orig.get(c) or "").strip()
+                    _norm(_r.get(c)) not in ("", "-", "nan")
+                    and _norm(_r.get(c)) != _orig.get(c, "")
                     for c in _edit_cols
                 )
                 if _is_edit:
-                    if _by_moid.get(_mo) != _r:
-                        _changed = True
                     _by_moid[_mo] = _r
-                elif _mo in _by_moid:
-                    # 원본과 같아짐(=편집 안 했거나 되돌림) → 대기목록에서 뺍니다.
-                    del _by_moid[_mo]
-                    _changed = True
             st.session_state[f"{key}_edited_records"] = list(_by_moid.values())
             # ★이 표는 @st.fragment 라, 셀을 고쳐도 표 '밖'(위쪽 '수정 대기' 등)은 안 갱신됩니다.
-            #   편집이 실제로 생기면 전체 리런을 한 번 해서 바깥도 갱신합니다.(같으면 리런 안 함)
-            if _changed:
+            #   편집이 실제로 바뀌었을 때만 1회 전체 리런해 바깥을 갱신합니다.
+            #   ⚠️ 예전엔 dict 원본(_r)을 직접 비교(!=)해서, NaN·키순서 차이로 '항상 다름'이 되어
+            #     매 렌더 st.rerun()이 돌았습니다. 그 결과 무한 리런에 빠져 아래 상세패널이
+            #     '영영 안 그려지고' 체크가 튕겼습니다. 그래서 '정규화된 편집 지문'이 바뀔 때만 리런합니다.
+            _edit_sig = sorted(
+                (_m,) + tuple(_norm(_r.get(c)) for c in _edit_cols)
+                for _m, _r in _by_moid.items()
+            )
+            _sig_key = f"{key}_edit_sig"
+            if st.session_state.get(_sig_key) != _edit_sig:
+                st.session_state[_sig_key] = _edit_sig
                 st.rerun()
         except Exception:  # noqa: BLE001
             pass
