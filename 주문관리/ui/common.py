@@ -2475,7 +2475,12 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
     # 🛑 출고중지요청 — 취소주문 화면에서만. 쿠팡 '출고중지완료 처리' API로 실제 처리합니다.
     # (PUT .../returnRequests/{receiptId}/stoppedShipment — Wing '출고중지완료' 버튼과 동일 동작)
     if claim_type == "CANCEL":
-        stop_items = [c for c in pending_claims if _is_release_stop(c)]
+        # ★'출고중지완료 처리할 건'은 '아직 미처리(release_stop_status=미처리)'인 것만 담습니다.
+        #   _is_release_stop()는 receipt_status가 'RELEASE_STOP*'이면(이미 처리됐어도) True라,
+        #   이걸 쓰면 방금 처리한 건이 (수집 전까지) 목록에 계속 남아 "여러 번 눌러야" 되는
+        #   것처럼 보였습니다. 처리하면 release_stop_status가 '처리(출고중지)'로 바뀌므로
+        #   _is_release_stop_pending 로 걸러 즉시 목록에서 빠지게 합니다.
+        stop_items = [c for c in pending_claims if _is_release_stop_pending(c)]
         if stop_items:
             by_receipt = {str(c["receipt_id"]): c for c in stop_items}
 

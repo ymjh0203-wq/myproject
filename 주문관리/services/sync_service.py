@@ -57,11 +57,14 @@ LAST_FETCHED_COUNT_KEY_PREFIX = "last_fetched_count"
 # 신규주문=결제완료(ACCEPT), 발송대기=상품준비중(INSTRUCT). '발송대기로 이동'을 누르면
 # 쿠팡에 상품준비중 처리를 요청해 ACCEPT→INSTRUCT로 넘어갑니다.
 # 배송중은 쿠팡에서 DEPARTURE(배송지시)와 DELIVERING(배송중) 두 상태 다 해당합니다.
+# 배송완료는 FINAL_DELIVERY(배송완료)와 NONE_TRACKING(업체직송/직접배송·무추적) 둘 다 해당합니다.
+# ※ 업체직송(NONE_TRACKING)은 택배 추적이 없어 쿠팡이 배송완료 스캔을 못 하지만,
+#   발송된 '배송완료 상당' 상태입니다. 이걸 배송완료로 봐야 배송중에 갇히지 않습니다.
 WORK_STATUS_TO_MARKET_STATUSES = {
     models.WORK_STATUS_NEW: ["ACCEPT"],
     models.WORK_STATUS_READY_TO_SHIP: ["INSTRUCT"],
     models.WORK_STATUS_SHIPPING: ["DEPARTURE", "DELIVERING"],
-    models.WORK_STATUS_DELIVERED: ["FINAL_DELIVERY"],
+    models.WORK_STATUS_DELIVERED: ["FINAL_DELIVERY", "NONE_TRACKING"],
 }
 
 
@@ -355,7 +358,7 @@ def reconcile_active_orders(period_from=None, period_to=None) -> dict:
 def advance_delivered_orders(progress=None) -> dict:
     """
     배송중(work_status=배송중) 주문을 쿠팡 '실제 상태'와 맞춥니다.
-      ① 배송완료(FINAL_DELIVERY)로 넘어간 건 → '배송완료' 단계로 전진.
+      ① 배송완료(FINAL_DELIVERY)·업체직송(NONE_TRACKING)으로 넘어간 건 → '배송완료' 단계로 전진.
       ② 아직 배송중인 건 → 쿠팡 원본상태(배송지시=DEPARTURE / 배송중=DELIVERING)를
          DB에 최신화. (배송중 화면의 하위탭 '배송지시/배송중'이 쿠팡과 정확히 일치하게 함)
 
@@ -404,9 +407,11 @@ def advance_delivered_orders(progress=None) -> dict:
 
         client = _client_for_account(account)
         try:
-            # 배송지시·배송중·배송완료를 함께 조회해서, 각 주문의 '현재 쿠팡 상태'를 확보합니다.
+            # 배송지시·배송중·배송완료·업체직송(무추적)을 함께 조회해서, 각 주문의 '현재 쿠팡 상태'를 확보합니다.
+            # NONE_TRACKING(업체직송/직접배송)은 택배 추적이 없어 FINAL_DELIVERY 스캔이 안 와서
+            # 배송중에 영영 갇히던 문제가 있었습니다. 이 상태를 함께 조회해 배송완료로 전진시킵니다.
             live = _fetch_statuses_with_retry(
-                client, ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY"], fetch_from, fetch_to
+                client, ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY", "NONE_TRACKING"], fetch_from, fetch_to
             )
         except CoupangApiError as error:
             # 이 계정은 조회 실패 → 안전을 위해 건드리지 않습니다.
@@ -419,7 +424,8 @@ def advance_delivered_orders(progress=None) -> dict:
             live_status = status_by_box.get(str(order["shipment_box_id"]))
             if not live_status:
                 continue  # 조회 범위 밖(오래됨) → 오판 방지로 건드리지 않음
-            if live_status == "FINAL_DELIVERY":
+            # FINAL_DELIVERY(배송완료)·NONE_TRACKING(업체직송/직접배송·무추적) → 배송완료로 전진.
+            if live_status in ("FINAL_DELIVERY", "NONE_TRACKING"):
                 if delivered_rank > order_rank.get(order["work_status"], -1):
                     order_repository.update_work_status(
                         order["id"], models.WORK_STATUS_DELIVERED, changed_by="auto-advance"
@@ -616,7 +622,7 @@ _STAGE_MARKET_MAP = [
     (models.WORK_STATUS_NEW, ["ACCEPT"]),
     (models.WORK_STATUS_READY_TO_SHIP, ["INSTRUCT"]),
     (models.WORK_STATUS_SHIPPING, ["DEPARTURE", "DELIVERING"]),
-    (models.WORK_STATUS_DELIVERED, ["FINAL_DELIVERY"]),
+    (models.WORK_STATUS_DELIVERED, ["FINAL_DELIVERY", "NONE_TRACKING"]),
 ]
 
 

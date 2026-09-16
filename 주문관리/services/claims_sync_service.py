@@ -143,10 +143,14 @@ def complete_release_stop(claim: dict) -> dict:
         return {"succeeded": False, "message": str(error)}
 
     if result.get("succeeded"):
-        # 로컬 출고중지 상태를 '처리(출고중지)'로 갱신 → '진행 중' 목록에서 빠짐.
+        # 로컬 상태를 '처리(출고중지)'로 갱신 → '진행 중' 목록에서 빠짐.
+        # ★receipt_status도 'RETURNS_COMPLETED'로 확정합니다: 쿠팡은 출고중지완료 처리하면
+        #   그 접수를 완료(RETURNS_COMPLETED)로 내려줍니다(이미 처리된 다른 건들도 전부 이 값).
+        #   예전엔 옛 receipt_status(예: RELEASE_STOP_UNCHECKED)를 그대로 둬서, 다음 수집 전까지
+        #   '출고중지요청'으로 남아 목록에서 안 빠지는(여러 번 눌러야 하는) 문제가 있었습니다.
         try:
             claims_repository.update_claim(
-                claim["id"], claim.get("receipt_status") or "RETURNS_COMPLETED",
+                claim["id"], "RETURNS_COMPLETED",
                 claim.get("reason_category1"), claim.get("reason_category2"), claim.get("reason_detail"),
                 claim.get("complete_confirm_type") or "", claim.get("complete_confirm_date") or "",
                 claim.get("raw_response_json") or "{}",

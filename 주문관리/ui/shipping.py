@@ -292,6 +292,15 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
             "조회해, 쿠팡에 등록된 송장과 다른 주문만 찾아 한 번에 **경동택배 송장으로** 수정합니다. "
             "(CJ 가송장 변경분은 잡지 않습니다.)"
         )
+        # 방금 '쿠팡에 송장 변경'한 결과를 새로고침 뒤 한 번만 보여줍니다.
+        _apply_res = st.session_state.pop("ship_inv_apply_result", None)
+        if _apply_res:
+            if _apply_res["fail"] == 0:
+                st.success(f"{_apply_res['ok']}건 송장 변경 완료!")
+            else:
+                st.warning(f"{_apply_res['ok']}건 성공 · {_apply_res['fail']}건 실패")
+                for _f in _apply_res["fails"]:
+                    st.text(_f)
         if st.button(
             f"🔎 변경분 찾기 (대상 {len(gr_orders)}건)",
             disabled=not gr_orders, key="ship_scan_inv_changes",
@@ -350,31 +359,31 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
             ok = fail = 0
             fails = []
             prog2 = st.progress(0.0)
-            for i, c in enumerate(changes):
-                order = by_id.get(c["order_id"])
-                if not order:
-                    fail += 1
-                    fails.append(f"{c['market_order_id']}: 주문을 찾지 못함")
-                else:
-                    try:
-                        r = sync_service.update_invoice_for_shipping(order, c["courier_code"], c["new"])
-                        if r.get("succeeded"):
-                            ok += 1
-                        else:
-                            fail += 1
-                            fails.append(f"{c['market_order_id']}: {r.get('message')}")
-                    except Exception as e:  # noqa: BLE001
+            # ★긴 작업(쿠팡에 여러 건 송장변경)이 도는 동안, 배경 자동수집 fragment의
+            #   st.rerun(scope="app")이 이 핸들러를 중간에 끊어 화면이 '흐릿→다시→반복'
+            #   깜빡이던 문제를 막습니다. (끊기면 ship_inv_changes를 못 비워서 표가 계속 다시 뜸)
+            with common.suppress_bg_rerun():
+                for i, c in enumerate(changes):
+                    order = by_id.get(c["order_id"])
+                    if not order:
                         fail += 1
-                        fails.append(f"{c['market_order_id']}: {e}")
-                prog2.progress((i + 1) / len(changes))
+                        fails.append(f"{c['market_order_id']}: 주문을 찾지 못함")
+                    else:
+                        try:
+                            r = sync_service.update_invoice_for_shipping(order, c["courier_code"], c["new"])
+                            if r.get("succeeded"):
+                                ok += 1
+                            else:
+                                fail += 1
+                                fails.append(f"{c['market_order_id']}: {r.get('message')}")
+                        except Exception as e:  # noqa: BLE001
+                            fail += 1
+                            fails.append(f"{c['market_order_id']}: {e}")
+                    prog2.progress((i + 1) / len(changes))
+                st.session_state.pop("ship_inv_changes", None)
             prog2.empty()
-            st.session_state.pop("ship_inv_changes", None)
-            if fail == 0:
-                st.success(f"{ok}건 송장 변경 완료!")
-            else:
-                st.warning(f"{ok}건 성공 · {fail}건 실패")
-                for f in fails[:10]:
-                    st.text(f)
+            # 결과는 새로고침 뒤에 한 번 보여줍니다(위 목록/송장 갱신 반영).
+            st.session_state["ship_inv_apply_result"] = {"ok": ok, "fail": fail, "fails": fails[:10]}
             st.rerun(scope="app")
 
 
