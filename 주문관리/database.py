@@ -66,16 +66,42 @@ class _PostgresConnection:
         self._conn.close()
 
 
-def _pg_connect() -> "_PostgresConnection":
-    """Supabase PostgreSQL에 접속합니다. 결과 행은 컬럼명으로 접근할 수 있습니다."""
-    import psycopg2
+_HYBRID_CURSOR = None
+
+
+def _get_hybrid_cursor():
+    """조회 결과 행을 sqlite3.Row 처럼 쓸 수 있는 psycopg2 커서를 만듭니다.
+    ★중요: 앱 코드 곳곳이 row["컬럼명"](딕셔너리 방식)과 row[0](위치 방식)를 '둘 다' 씁니다.
+      RealDictCursor는 딕셔너리 방식만 돼서 row[0]에서 KeyError가 났습니다(알람 계산 등).
+      그래서 RealDictRow를 상속해 '정수 인덱스(row[0])'도 되게 확장합니다.
+      (dict(row)·row["col"]·.keys()/.values() 등 기존 동작은 그대로 유지)"""
+    global _HYBRID_CURSOR
+    if _HYBRID_CURSOR is not None:
+        return _HYBRID_CURSOR
     import psycopg2.extras
+
+    class _HybridDictRow(psycopg2.extras.RealDictRow):
+        def __getitem__(self, key):
+            if isinstance(key, int):
+                return list(self.values())[key]
+            return psycopg2.extras.RealDictRow.__getitem__(self, key)
+
+    class _HybridDictCursor(psycopg2.extras.RealDictCursor):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.row_factory = _HybridDictRow
+
+    _HYBRID_CURSOR = _HybridDictCursor
+    return _HYBRID_CURSOR
+
+
+def _pg_connect() -> "_PostgresConnection":
+    """Supabase PostgreSQL에 접속합니다. 결과 행은 컬럼명(row["col"])·위치(row[0]) 둘 다 됩니다."""
+    import psycopg2
 
     raw = psycopg2.connect(
         config.DATABASE_URL,
-        # RealDictCursor: 조회 결과를 dict(row) / row["컬럼명"] 으로 쓸 수 있게 합니다
-        # (sqlite3.Row 와 동일한 사용감).
-        cursor_factory=psycopg2.extras.RealDictCursor,
+        cursor_factory=_get_hybrid_cursor(),
         connect_timeout=15,
     )
     return _PostgresConnection(raw)
@@ -540,7 +566,11 @@ def _migrate_taobao_link_multi(connection) -> None:
     (2026-08 1회성) taobao_link을 '상품당 링크 1개'(seller_product_code PK) → '여러 개 가능'
     (id PK) 스키마로 바꿉니다. 옛 스키마(=id 컬럼 없음)면 기존 데이터를 새 표로 옮기고 교체합니다.
     """
-    cols = [r[1] for r in connection.execute("PRAGMA table_info(taobao_link)")]
+    # PostgreSQL은 애초에 새 스키마(id PK)로 표를 만들므로 이 SQLite용 이관이 필요 없습니다.
+    # (아래 PRAGMA/AUTOINCREMENT는 SQLite 전용 문법이라 Postgres에선 오류가 납니다.)
+    if config.use_postgres():
+        return
+    cols = _existing_columns(connection, "taobao_link")
     if not cols or "id" in cols:
         return  # 테이블 없음(이미 새 스키마로 생성됨) 또는 이미 새 스키마
 

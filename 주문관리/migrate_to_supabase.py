@@ -131,15 +131,16 @@ def main():
                 print(f"   - {table}: 0건")
                 continue
 
-            placeholders = ", ".join(["?"] * len(cols))
-            insert_sql = (
-                f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({placeholders})"
-            )
-            for row in rows:
-                pg_conn.execute(insert_sql, tuple(row[c] for c in cols))
+            # ★한 줄씩 넣으면 원격(Supabase) 왕복이 너무 많아 아주 느립니다.
+            #   execute_values 로 '한 번에 여러 건' 넣어 수천 배 빠르게 복사합니다.
+            from psycopg2.extras import execute_values
+            insert_sql = f"INSERT INTO {table} ({', '.join(cols)}) VALUES %s"
+            data = [tuple(row[c] for c in cols) for row in rows]
+            cur = pg_conn.cursor()
+            execute_values(cur, insert_sql, data, page_size=1000)
             pg_conn.commit()
             total += len(rows)
-            print(f"   - {table}: {len(rows)}건")
+            print(f"   - {table}: {len(rows)}건", flush=True)
 
         print("[3/4] 자동증가(id) 번호 맞추는 중...")
         for table in SERIAL_ID_TABLES:
