@@ -654,6 +654,31 @@ def bulk_update_settlement_amount(mapping: dict) -> int:
         connection.close()
 
 
+def _attach_items_and_shipping(connection, orders: list) -> list:
+    """여러 주문에 상품(items)·수취인/통관(shipping)을 '한 번에' 붙입니다.
+    ★N+1 방지: 예전엔 주문마다 items·shipping을 따로 조회해서, 클라우드(Postgres)에선
+      256건이면 512회 왕복 → 수십 초 걸렸습니다. 이걸 IN 절 2회 조회로 줄입니다.
+    orders: dict 목록(각 'id' 필요). 제자리에서 order['items']·order['shipping']를 채웁니다."""
+    if not orders:
+        return orders
+    ids = [o["id"] for o in orders]
+    placeholders = ", ".join(["?"] * len(ids))
+    items_by_order = {}
+    for row in connection.execute(
+        f"SELECT * FROM order_items WHERE order_id IN ({placeholders})", tuple(ids)
+    ).fetchall():
+        items_by_order.setdefault(row["order_id"], []).append(dict(row))
+    shipping_by_order = {}
+    for row in connection.execute(
+        f"SELECT * FROM shipping_information WHERE order_id IN ({placeholders})", tuple(ids)
+    ).fetchall():
+        shipping_by_order[row["order_id"]] = dict(row)
+    for order in orders:
+        order["items"] = items_by_order.get(order["id"], [])
+        order["shipping"] = shipping_by_order.get(order["id"])
+    return orders
+
+
 def list_orders_by_work_status(work_status: str) -> list:
     """
     특정 내부 작업 상태에 해당하는 주문 목록을 돌려줍니다.
@@ -673,23 +698,8 @@ def list_orders_by_work_status(work_status: str) -> list:
             (work_status,),
         ).fetchall()
 
-        results = []
-        for order_row in order_rows:
-            order = dict(order_row)
-
-            item_rows = connection.execute(
-                "SELECT * FROM order_items WHERE order_id = ?", (order["id"],)
-            ).fetchall()
-            order["items"] = [dict(row) for row in item_rows]
-
-            shipping_row = connection.execute(
-                "SELECT * FROM shipping_information WHERE order_id = ?", (order["id"],)
-            ).fetchone()
-            order["shipping"] = dict(shipping_row) if shipping_row else None
-
-            results.append(order)
-
-        return results
+        orders = [dict(order_row) for order_row in order_rows]
+        return _attach_items_and_shipping(connection, orders)
     finally:
         connection.close()
 
@@ -713,19 +723,8 @@ def list_orders_with_cs_memo() -> list:
             """,
         ).fetchall()
 
-        results = []
-        for order_row in order_rows:
-            order = dict(order_row)
-            item_rows = connection.execute(
-                "SELECT * FROM order_items WHERE order_id = ?", (order["id"],)
-            ).fetchall()
-            order["items"] = [dict(row) for row in item_rows]
-            shipping_row = connection.execute(
-                "SELECT * FROM shipping_information WHERE order_id = ?", (order["id"],)
-            ).fetchone()
-            order["shipping"] = dict(shipping_row) if shipping_row else None
-            results.append(order)
-        return results
+        orders = [dict(order_row) for order_row in order_rows]
+        return _attach_items_and_shipping(connection, orders)
     finally:
         connection.close()
 

@@ -38,8 +38,9 @@ def _to_pg_sql(sql: str) -> str:
 class _PostgresConnection:
     """psycopg2 연결을 sqlite3.Connection 처럼 쓸 수 있게 감싼 객체입니다."""
 
-    def __init__(self, raw_connection):
+    def __init__(self, raw_connection, pool=None):
         self._conn = raw_connection
+        self._pool = pool  # 커넥션 풀에서 빌려온 것이면, close 때 실제로 안 닫고 풀에 반납
 
     def execute(self, sql: str, params=()):
         """sqlite의 connection.execute 와 똑같이, 실행 후 커서를 돌려줍니다."""
@@ -58,7 +59,20 @@ class _PostgresConnection:
         self._conn.rollback()
 
     def close(self):
-        # 열려 있던(커밋 안 한) 조회 트랜잭션을 깨끗이 정리한 뒤 닫습니다.
+        # ★커넥션 풀에서 빌려온 연결이면 '실제로 닫지 않고' 풀에 되돌립니다(재사용).
+        #   그래야 조회마다 클라우드에 새로 연결(핸드셰이크 ~0.5초)하는 렉이 없어집니다.
+        if self._pool is not None:
+            broken = bool(getattr(self._conn, "closed", 0))
+            if not broken:
+                try:
+                    self._conn.rollback()  # 커밋 안 한 조회 트랜잭션 정리 후 반납
+                except Exception:
+                    broken = True
+            try:
+                self._pool.putconn(self._conn, close=broken)
+                return
+            except Exception:
+                pass  # 반납 실패 시 아래에서 그냥 닫음
         try:
             self._conn.rollback()
         except Exception:
@@ -95,16 +109,43 @@ def _get_hybrid_cursor():
     return _HYBRID_CURSOR
 
 
-def _pg_connect() -> "_PostgresConnection":
-    """Supabase PostgreSQL에 접속합니다. 결과 행은 컬럼명(row["col"])·위치(row[0]) 둘 다 됩니다."""
-    import psycopg2
+_PG_POOL = None
+_PG_POOL_LOCK = None
 
-    raw = psycopg2.connect(
-        config.DATABASE_URL,
-        cursor_factory=_get_hybrid_cursor(),
-        connect_timeout=15,
-    )
-    return _PostgresConnection(raw)
+
+def _get_pg_pool():
+    """Supabase 연결을 '재사용'하는 커넥션 풀. 조회마다 새로 연결(핸드셰이크 ~0.5초)하지 않고
+    이미 열린 연결을 빌려 써서 클라우드 렉을 크게 줄입니다. 수집·알람 등 여러 스레드가 동시에
+    써도 안전하도록 ThreadedConnectionPool을 씁니다. TCP keepalive로 유휴 연결이 끊겨도
+    빨리 감지·정리합니다."""
+    global _PG_POOL, _PG_POOL_LOCK
+    if _PG_POOL is not None:
+        return _PG_POOL
+    import threading
+    if _PG_POOL_LOCK is None:
+        _PG_POOL_LOCK = threading.Lock()
+    with _PG_POOL_LOCK:
+        if _PG_POOL is None:
+            import psycopg2.pool
+            # maxconn은 작게(무료 플랜 연결 수 한도). 1인 데스크톱 앱은 메인 + 수집/알람 스레드
+            # 정도라 6이면 충분. 초과 요청 시 잠깐 기다렸다 재사용됩니다.
+            _PG_POOL = psycopg2.pool.ThreadedConnectionPool(
+                1, 6,
+                dsn=config.DATABASE_URL,
+                cursor_factory=_get_hybrid_cursor(),
+                connect_timeout=15,
+                keepalives=1, keepalives_idle=30,
+                keepalives_interval=10, keepalives_count=5,
+            )
+    return _PG_POOL
+
+
+def _pg_connect() -> "_PostgresConnection":
+    """Supabase PostgreSQL에 접속합니다(커넥션 풀에서 재사용).
+    결과 행은 컬럼명(row["col"])·위치(row[0]) 둘 다 됩니다. close()하면 풀로 반납됩니다."""
+    pool = _get_pg_pool()
+    raw = pool.getconn()
+    return _PostgresConnection(raw, pool=pool)
 
 
 def get_connection():
