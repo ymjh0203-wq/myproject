@@ -2567,6 +2567,21 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             )
             return
 
+    # 클레임 표의 날짜 컬럼: '주문일'(주문한 날) 대신 '반품/취소 접수일'(클레임 접수일)로 보여줍니다.
+    #   ('최초 주문일시' 컬럼에 원주문 일시가 이미 있어, 여기선 접수일이 더 유용합니다.)
+    _receipt_date_col = "반품접수일" if claim_type == "RETURN" else "취소접수일"
+    # 예전 '주문일' 컬럼을 쓰던 사용자의 표시·순서 설정을 새 컬럼명으로 1회 이관(맞춰둔 레이아웃 유지).
+    _tkey = f"claim_table:{claim_type}"
+    _co = settings_repository.get_setting(f"column_order:{_tkey}")
+    if _co and "주문일" in _co.split("|"):
+        settings_repository.set_setting(
+            f"column_order:{_tkey}",
+            "|".join(_receipt_date_col if p == "주문일" else p for p in _co.split("|")),
+        )
+        st.session_state.pop(f"{_tkey}_column_order", None)
+    if settings_repository.get_setting(f"sort_col:{_tkey}") == "주문일":
+        settings_repository.set_setting(f"sort_col:{_tkey}", _receipt_date_col)
+
     # 원주문에 CS메모가 있으면 그 클레임 줄을 붉게 표시(샵마인처럼) — 클레임엔 cs_memo가 없어서
     # 주문번호로 원주문의 CS메모를 붙여 넣습니다. (표 색칠은 각 행의 'cs_memo' 값으로 판단됨)
     _cs_memo_map = order_repository.get_cs_memo_map()
@@ -2575,7 +2590,7 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             "접수번호": c["receipt_id"],
             "주문번호": c["market_order_id"] or "-",
             "마켓": MARKET_DISPLAY_NAME.get(c.get("market_name"), c.get("market_name") or "-"),
-            "주문일": (c.get("ordered_at") or "")[:10] or "-",
+            _receipt_date_col: (c.get("requested_at") or "")[:10] or "-",
             "최초 주문일시": _short_date(c.get("ordered_at")) if c.get("ordered_at") else "-",
             "상점": c.get("market_account_name") or "-",
             # 'cs_memo'는 표 색칠(붉게) 판단용. render_records_table이 표시 컬럼에서 제외하고,
