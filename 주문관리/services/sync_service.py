@@ -541,6 +541,63 @@ def close_returned_active_orders() -> dict:
         return {"status": "fail", "closed_count": 0, "error_message": str(error)}
 
 
+def reconcile_returned_final_orders(progress=None) -> dict:
+    """배송완료·구매확정에 있는 '반품/취소 클레임' 주문을 쿠팡과 '같이 움직이게' 맞춥니다.
+
+    ★왜 건별 조회인가: 쿠팡은 반품완료된 주문 대부분을 배송완료에서 빼지만(단건조회 400
+      "취소 또는 반품 되었습니다"), 일부는 반품표시가 있어도 배송완료(FINAL_DELIVERY)로
+      그대로 유지합니다(실측 2026-09). 그래서 '반품이력'만으로 종료하면 안 되고, 각 주문을
+      쿠팡에 실제로 물어봐서 '쿠팡이 실제로 뺀 것만' 주문종료로 정리합니다.
+      - 쿠팡이 뺐다(removed) → 주문종료.
+      - 쿠팡이 아직 상태를 준다(status) → 그대로 둠(쿠팡이 유지하므로).
+      - 조회 실패(error) → 오판 방지로 건드리지 않음.
+    반환: {status, closed_count, kept_count, error_message}"""
+    try:
+        targets = order_repository.list_final_orders_with_claims()
+    except Exception as error:  # noqa: BLE001
+        return {"status": "fail", "closed_count": 0, "kept_count": 0, "error_message": str(error)}
+    if not targets:
+        return {"status": "success", "closed_count": 0, "kept_count": 0, "error_message": None}
+
+    clients = {}
+    closed = kept = errors = 0
+    total = len(targets)
+    for i, o in enumerate(targets):
+        acc_id = o.get("market_account_id")
+        client = clients.get(acc_id)
+        if client is None:
+            account = market_repository.get_market_account(acc_id)
+            if not account:
+                errors += 1
+                continue
+            client = clients[acc_id] = _client_for_account(account)
+        try:
+            kind, _detail = client.probe_order_state(o["market_order_id"])
+        except Exception:  # noqa: BLE001
+            errors += 1
+            kind = "error"
+        if kind == "removed":
+            order_repository.update_work_status(
+                o["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile-final"
+            )
+            closed += 1
+        elif kind == "status":
+            kept += 1  # 쿠팡이 유지 → 그대로 둠
+        # error → 건드리지 않음
+        if progress:
+            try:
+                progress(i + 1, total)
+            except Exception:  # noqa: BLE001
+                pass
+
+    return {
+        "status": "success",
+        "closed_count": closed,
+        "kept_count": kept,
+        "error_message": (f"{errors}건 조회불가(그대로 둠)" if errors else None),
+    }
+
+
 def advance_confirmed_orders(min_days_since_order: int = 30, dry_run: bool = False,
                              progress=None) -> dict:
     """

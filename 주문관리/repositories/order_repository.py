@@ -1023,6 +1023,29 @@ def close_active_orders_with_completed_claims() -> int:
     return len(order_ids)
 
 
+def list_final_orders_with_claims() -> list:
+    """배송완료·구매확정 주문 중 반품/취소 클레임이 있는 주문을 돌려줍니다(종료하지 않고 '목록만').
+    쿠팡에 건별로 실제 상태를 물어봐서, 쿠팡이 실제로 뺀 것만 주문종료로 정리하기 위한 대상입니다.
+    (반품표시가 있어도 쿠팡이 배송완료로 유지하는 건도 있어, 클레임만으로 종료하면 안 됩니다.)"""
+    targets = (models.WORK_STATUS_DELIVERED, models.WORK_STATUS_PURCHASE_CONFIRMED)
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT orders.id, orders.market_order_id, orders.market_account_id,
+                   orders.work_status, orders.ordered_at
+            FROM orders
+            JOIN claims ON claims.market_order_id = orders.market_order_id
+            WHERE orders.work_status IN ({",".join("?" for _ in targets)})
+              AND claims.claim_type IN ('RETURN', 'CANCEL')
+            """,
+            targets,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
 def close_delivered_orders_with_returns() -> int:
     """배송완료·구매확정 주문 중 '반품 클레임'(신청·완료 무관)이 있는 건을 '주문종료'로 정리합니다.
     쿠팡처럼 반품신청이 오면(또는 바로 환불완료돼도) 배송완료/구매확정(판매) 목록에서 빠지게 합니다.

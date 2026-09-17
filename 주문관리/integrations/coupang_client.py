@@ -463,6 +463,31 @@ class CoupangClient:
             return {"succeeded": False, "message": data.get("resultMessage") or "승인 처리 실패"}
         return {"succeeded": True, "message": "취소(출고중지) 승인이 완료되었습니다."}
 
+    def probe_order_state(self, market_order_id) -> tuple:
+        """단건 주문서 조회로 이 주문의 '현재 쿠팡 상태'를 확인합니다.
+        (GET .../v4/vendors/{vendorId}/{orderId}/ordersheets)
+        돌려주는 값(kind, detail):
+          - ("removed", None) : 쿠팡이 취소·반품으로 뺀 주문 (400 "해당 주문이 취소 또는 반품 되었습니다")
+          - ("status", "FINAL_DELIVERY"/...) : 쿠팡이 아직 그 상태로 유지 중
+          - ("error", 메시지) : 조회 실패/불확실 → 건드리면 안 됨(오판 방지)
+        """
+        if self.mode == "mock":
+            return ("error", "mock 모드")
+        self._check_credentials()
+        path = f"/v2/providers/openapi/apis/api/v4/vendors/{self.vendor_id}/{int(market_order_id)}/ordersheets"
+        try:
+            resp = self._request("GET", path, params={})
+        except CoupangApiError as error:
+            msg = str(error)
+            # 쿠팡이 취소·반품으로 배송목록에서 뺀 주문은 이 문구의 400을 냅니다(실측 2026-09).
+            if "취소 또는 반품" in msg:
+                return ("removed", None)
+            return ("error", msg)
+        data = resp.get("data") if isinstance(resp, dict) else None
+        if isinstance(data, list) and data:
+            return ("status", (data[0].get("status") or "").upper())
+        return ("error", "빈 응답")
+
     def stopped_shipment(self, receipt_id, cancel_count: int) -> dict:
         """출고중지완료 처리 — 미발송 취소요청을 '출고중지완료'로 확정합니다.
         (쿠팡 '출고중지완료 처리': PUT .../returnRequests/{receiptId}/stoppedShipment)

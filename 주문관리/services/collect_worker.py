@@ -190,6 +190,12 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                     errors.append(ac["error_message"])
                 # 정산(매출인식)에 뜬 완료 주문을 구매확정으로 정리(쿠팡 데이터 기준).
                 advanced_c += sync_service.advance_settled_orders(recognition_days=20).get("advanced_count", 0) or 0
+                # 배송완료/구매확정에 있는 반품·취소 건을 '건별 쿠팡 조회'로 맞춤:
+                #   쿠팡이 실제로 뺀 것만 주문종료로 정리(유지하는 건 그대로). 반품완료 목록엔 그대로 남음.
+                rf = sync_service.reconcile_returned_final_orders()
+                closed_c += rf.get("closed_count", 0) or 0
+                if rf.get("error_message"):
+                    errors.append(rf["error_message"])
             except Exception as error:  # noqa: BLE001
                 errors.append(str(error))
             done += 1
