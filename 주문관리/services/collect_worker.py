@@ -169,6 +169,8 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
             try:
                 ad = sync_service.advance_delivered_orders()
                 advanced_c += ad.get("advanced_count", 0) or 0
+                # 배송에서 사라진(취소·반품) 배송중 주문을 주문종료로 정리한 건수도 합칩니다.
+                closed_c += ad.get("closed_count", 0) or 0
                 if ad.get("error_message"):
                     errors.append(ad["error_message"])
                 # 배송중 수집 때도 '반품·취소 완료된 배송중 주문'을 함께 정리합니다.

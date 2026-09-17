@@ -104,6 +104,12 @@ def _maybe_advance_work_status(order_id: int, current_status: str, target_status
     """
     if current_status == target_status:
         return
+    # ★주문종료(취소·반품 등)됐던 주문이 쿠팡 '활성 목록'에 다시 나타나면(예: 반품접수를
+    #   고객이 철회) 되살립니다. 쿠팡이 배송지시(DEPARTURE) 등 활성 상태로 돌려준다는 건
+    #   그 취소·반품이 되돌려졌다는 뜻이라, 쿠팡 실제 상태대로 그 단계로 복귀시킵니다.
+    if current_status == models.WORK_STATUS_CLOSED:
+        order_repository.update_work_status(order_id, target_status, changed_by="auto-revive")
+        return
     try:
         current_index = models.WORK_STATUS_LIST.index(current_status)
         target_index = models.WORK_STATUS_LIST.index(target_status)
@@ -389,6 +395,7 @@ def advance_delivered_orders(progress=None) -> dict:
     total_scanned = 0
     total_advanced = 0
     total_substatus = 0
+    total_closed = 0
     errors = []
 
     for acc_i, account in enumerate(accounts):
@@ -423,7 +430,21 @@ def advance_delivered_orders(progress=None) -> dict:
         for order in shipping:
             live_status = status_by_box.get(str(order["shipment_box_id"]))
             if not live_status:
-                continue  # 조회 범위 밖(오래됨) → 오판 방지로 건드리지 않음
+                # 쿠팡 배송(활성) 목록 어디에도 없음.
+                #  ★조회 범위(120일) 안이면: 취소·반품으로 쿠팡이 배송에서 뺀 것 → 주문종료로 정리.
+                #    (쿠팡 실측 2026-09: 배송지시(DEPARTURE) 주문이 반품접수되면 어느 배송상태
+                #     조회에도 안 나오고, 단건조회는 "취소 또는 반품 되었습니다"를 냅니다.
+                #     ↔ 배송완료(FINAL_DELIVERY)는 반품돼도 유지되므로 그건 배송완료에 그대로 둡니다.)
+                #    이후 고객이 반품접수를 철회하면 쿠팡이 다시 DEPARTURE로 돌려주고,
+                #    다음 수집 때 _maybe_advance_work_status가 배송중으로 되살립니다.
+                #  ★조회 범위보다 오래된 주문은 '사라졌다' 오판 방지로 건드리지 않습니다.
+                od = _order_date(order)
+                if od is not None and od >= fetch_from:
+                    order_repository.update_work_status(
+                        order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile-shipping"
+                    )
+                    total_closed += 1
+                continue
             # FINAL_DELIVERY(배송완료)·NONE_TRACKING(업체직송/직접배송·무추적) → 배송완료로 전진.
             if live_status in ("FINAL_DELIVERY", "NONE_TRACKING"):
                 if delivered_rank > order_rank.get(order["work_status"], -1):
@@ -447,6 +468,7 @@ def advance_delivered_orders(progress=None) -> dict:
         "scanned": total_scanned,
         "advanced_count": total_advanced,
         "substatus_updated": total_substatus,
+        "closed_count": total_closed,
         "error_message": " / ".join(errors) if errors else None,
     }
 
