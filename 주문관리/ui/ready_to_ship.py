@@ -364,6 +364,65 @@ def _confirm_send_sms(order: dict, phone: str, message: str) -> None:
             st.rerun()
 
 
+def _order_phone(order: dict) -> str:
+    """이 주문의 문자 받을 번호(통관 전화 우선, 없으면 수령자 전화)."""
+    shipping = order.get("shipping") or {}
+    return shipping.get("customs_phone") or shipping.get("receiver_phone_raw") or ""
+
+
+@st.dialog("문자 일괄 발송")
+def _confirm_bulk_sms(orders: list, template_key: str) -> None:
+    """체크한 여러 주문에게 고른 문구를 한 번에 발송하기 전, 마지막으로 확인하는 창입니다.
+    전화번호 없는 주문은 자동 제외하고, 주문마다 상품명 등은 각자 데이터로 채워 보냅니다."""
+    label = sms_templates.TEMPLATES[template_key]["label"]
+    targets = [(o, _order_phone(o)) for o in orders if _order_phone(o)]
+    no_phone = [o for o in orders if not _order_phone(o)]
+
+    st.write(f"체크한 **{len(orders)}건** 중 **{len(targets)}건**에게 **[{label}]** 문자를 발송합니다.")
+    if no_phone:
+        st.warning(f"전화번호가 없는 {len(no_phone)}건은 발송에서 제외됩니다.")
+    if targets:
+        st.text_area(
+            "발송 문구 미리보기 (첫 주문 기준 — 주문마다 상품명·고객명 등은 각자 자동 반영)",
+            value=sms_templates.render_template(template_key, targets[0][0]),
+            height=180, disabled=True, key="rts_bulk_sms_preview",
+        )
+        with st.expander(f"받는 사람 {len(targets)}명 보기"):
+            for o, ph in targets:
+                st.caption(f"- {o.get('market_order_id')} · {privacy.mask_phone(ph)}")
+    st.caption("설정된 문자 발송 경로(폰 SMS 게이트웨이 또는 Phone Link)로 보냅니다.")
+
+    col_yes, col_no = st.columns(2)
+    with col_yes:
+        if st.button(f"✅ {len(targets)}건 발송", type="primary", width="stretch", disabled=not targets):
+            ok = 0
+            fails = []
+            with st.spinner(f"문자 발송 중입니다... ({len(targets)}건)"):
+                for o, phone in targets:
+                    message = sms_templates.render_template(template_key, o)
+                    try:
+                        send_message(phone, message)
+                    except Exception as error:  # noqa: BLE001 (PhoneLinkError 포함)
+                        order_repository.record_sms_send(
+                            o["id"], o.get("market_order_id"), phone, template_key,
+                            kind="manual", success=False, error_message=str(error),
+                        )
+                        fails.append(f"{o.get('market_order_id')}: {error}")
+                    else:
+                        order_repository.record_sms_send(
+                            o["id"], o.get("market_order_id"), phone, template_key,
+                            kind="manual", success=True,
+                        )
+                        ok += 1
+            st.session_state["ready_to_ship_bulk_sms_result"] = {
+                "ok": ok, "fail": len(fails), "fails": fails[:10], "skipped": len(no_phone),
+            }
+            st.rerun()
+    with col_no:
+        if st.button("취소", width="stretch"):
+            st.rerun()
+
+
 _SMS_TEMPLATE_LABELS = {
     "customs_error": "통관오류문구(1번)",
     "zipcode_error": "우편번호오류문구(2번)",
@@ -542,6 +601,16 @@ def render() -> None:
         else:
             st.error(f"문자 발송 자동화 실패: {result['message']} (문구는 클립보드에 복사되어 있습니다)")
 
+    if st.session_state.get("ready_to_ship_bulk_sms_result"):
+        _r = st.session_state.pop("ready_to_ship_bulk_sms_result")
+        _extra = (f" · 번호없어 제외 {_r['skipped']}건" if _r.get("skipped") else "")
+        if _r["fail"] == 0:
+            st.success(f"문자 일괄 발송 완료 — {_r['ok']}건 발송{_extra}")
+        else:
+            st.warning(f"문자 일괄 발송 — 성공 {_r['ok']}건 · 실패 {_r['fail']}건{_extra}")
+            for _f in _r["fails"]:
+                st.text(f"- {_f}")
+
     # ------------------------------------------------------
     # 상단: 결제일시 기간 + 수집하기
     # 쿠팡에서 이미 "상품준비중"(INSTRUCT) 상태인 주문을 직접 가져옵니다.
@@ -641,6 +710,23 @@ def render() -> None:
         primary_label="🚚 발송처리",
         primary_help="표에 입력한 택배사·송장번호를 쿠팡에 등록하고 배송중으로 넘깁니다.",
     )
+
+    # 📨 선택 주문 문자 일괄 발송: 표에서 행을 체크하고, 보낼 문구를 골라 한 번에 보냅니다.
+    _sms_col1, _sms_col2 = st.columns([3, 2])
+    with _sms_col1:
+        bulk_sms_template = st.selectbox(
+            "문자 문구 선택",
+            options=list(sms_templates.TEMPLATES.keys()),
+            format_func=lambda k: sms_templates.TEMPLATES[k]["label"],
+            key="rts_bulk_sms_template",
+        )
+    with _sms_col2:
+        st.write("")
+        bulk_sms_clicked = st.button(
+            "📨 선택 주문 문자 발송", width="stretch", on_click=_suppress_bg_on_click,
+            help="표 왼쪽 체크박스로 주문을 고르고 누르면, 위에서 고른 문구를 그 주문들에게 한 번에 발송합니다. "
+                 "(전화번호 없는 주문은 자동 제외, 주문마다 상품명 등은 각자 자동 반영)",
+        )
 
     # 정렬(주문일 오름차순 등) — 고른 정렬을 DB에 저장해, 다른 단계 갔다 와도/앱 껐다 켜도 유지됩니다.
     _sort_options = [c for c in ["주문일(약식)", "수령자", "주문번호", "통관검증 상태", "발송 가능 여부", "상품명"]
@@ -811,6 +897,13 @@ def render() -> None:
             st.warning("검증할 주문을 표 왼쪽 체크박스로 선택해주세요.")
         else:
             _confirm_official_check(selected_orders)
+
+    # 📨 선택 주문 문자 일괄 발송
+    if bulk_sms_clicked:
+        if not selected_orders:
+            st.warning("문자 보낼 주문을 표 왼쪽 체크박스로 선택해주세요.")
+        else:
+            common.open_dialog_deferred(_confirm_bulk_sms, selected_orders, bulk_sms_template)
 
     # 퀵스타 배대지 접수(메인 버튼) — 표 안 '퀵스타 연동' 버튼이 불안정해서 여기서 확실히 엽니다.
     if quickstar_selected_clicked:
