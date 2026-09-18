@@ -1047,7 +1047,8 @@ def replace_rules_dialog() -> None:
 
 
 def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None,
-                               primary_help: str = None, invoice_button: bool = False) -> bool:
+                               primary_help: str = None, invoice_button: bool = False,
+                               sms_button: bool = False) -> bool:
     """
     샵마인식 액션 버튼 바(신규주문에서 쓰던 것)를 공용화한 것입니다. 각 단계 화면이
     같은 모양으로 씁니다.
@@ -1068,6 +1069,13 @@ def render_shopmine_action_bar(key: str, orders: list, primary_label: str = None
         _swap = st.button("🔧 바꾸기설정", key=f"{key}_bar_swap")
         _tpl = st.button("📑 엑셀양식설정", key=f"{key}_bar_tplset", help="엑셀 양식 만들기 화면으로 이동합니다.")
         _excel = st.button("📥 엑셀파일생성", key=f"{key}_bar_excelgen", type="primary")
+        if sms_button:
+            # 발송대기 전용: 표에서 체크한 주문들에게 '아래에서 고른 문구'를 한 번에 발송.
+            # (클릭 여부를 세션에 담아, 호출 화면이 뒤에서 처리합니다.)
+            st.session_state[f"{key}_bar_sms_clicked"] = st.button(
+                "📨 문자 발송", key=f"{key}_bar_sms", type="primary",
+                help="표 왼쪽 체크박스로 주문을 고르고, 아래 '문구 종류'를 선택한 뒤 누르면 한 번에 발송합니다.",
+            )
         if invoice_button:
             # 배송중 화면 전용: 표에서 택배사/송장번호를 고친 뒤 이 버튼으로 팝업을 열어
             # 여러 건을 한 번에 쿠팡에 반영합니다.

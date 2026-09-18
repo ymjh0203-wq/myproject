@@ -709,24 +709,17 @@ def render() -> None:
         "rts", filtered_orders,
         primary_label="🚚 발송처리",
         primary_help="표에 입력한 택배사·송장번호를 쿠팡에 등록하고 배송중으로 넘깁니다.",
+        sms_button=True,  # '엑셀파일생성' 옆에 '📨 문자 발송' 버튼 추가
     )
 
-    # 📨 선택 주문 문자 일괄 발송: 표에서 행을 체크하고, 보낼 문구를 골라 한 번에 보냅니다.
-    _sms_col1, _sms_col2 = st.columns([3, 2])
-    with _sms_col1:
-        bulk_sms_template = st.selectbox(
-            "문자 문구 선택",
-            options=list(sms_templates.TEMPLATES.keys()),
-            format_func=lambda k: sms_templates.TEMPLATES[k]["label"],
-            key="rts_bulk_sms_template",
-        )
-    with _sms_col2:
-        st.write("")
-        bulk_sms_clicked = st.button(
-            "📨 선택 주문 문자 발송", width="stretch", on_click=_suppress_bg_on_click,
-            help="표 왼쪽 체크박스로 주문을 고르고 누르면, 위에서 고른 문구를 그 주문들에게 한 번에 발송합니다. "
-                 "(전화번호 없는 주문은 자동 제외, 주문마다 상품명 등은 각자 자동 반영)",
-        )
+    # 위 '📨 문자 발송' 버튼으로 보낼 '문구 종류'를 바로 아래에서 고릅니다.
+    bulk_sms_clicked = st.session_state.get("rts_bar_sms_clicked", False)
+    bulk_sms_template = st.selectbox(
+        "보낼 문구 종류 (관세 안내·크무비 안내·통관오류 등)",
+        options=list(sms_templates.TEMPLATES.keys()),
+        format_func=lambda k: sms_templates.TEMPLATES[k]["label"],
+        key="rts_bulk_sms_template",
+    )
 
     # 정렬(주문일 오름차순 등) — 고른 정렬을 DB에 저장해, 다른 단계 갔다 와도/앱 껐다 켜도 유지됩니다.
     _sort_options = [c for c in ["주문일(약식)", "수령자", "주문번호", "통관검증 상태", "발송 가능 여부", "상품명"]
