@@ -1981,7 +1981,12 @@ def render_full_table(filtered_rows: list, filtered_orders: list, key: str, invo
         settings_repository.set_setting(f"table_width:{key}", str(table_width_percent))
 
     paired = list(zip(filtered_rows, filtered_orders))
-    paired.sort(key=lambda pair: pair[0].get(sort_col), reverse=(sort_dir == "내림차순"))
+    # ★정렬 값이 없는(None) 행(예: 원주문 미수집 클레임)이 섞여도 안 터지게 문자열로 비교합니다.
+    #   ('None < str' 비교 에러 방지) 값이 빈 행은 맨 뒤로 가도록 (없음, 값) 튜플로 정렬.
+    paired.sort(
+        key=lambda pair: (pair[0].get(sort_col) is None, str(pair[0].get(sort_col) or "")),
+        reverse=(sort_dir == "내림차순"),
+    )
     sorted_rows = [pair[0] for pair in paired]
     sorted_orders = [pair[1] for pair in paired]
 
