@@ -27,6 +27,23 @@ def find_product_inquiry(market_name: str, inquiry_id: str):
         connection.close()
 
 
+def find_product_inquiries_map(market_name: str, inquiry_ids: list) -> dict:
+    """여러 문의를 '한 번에' 조회해 {inquiry_id: row(dict)} 로 돌려줍니다.
+    ★수집 때 문의마다 따로 find 하던 N+1(클라우드에서 느림)을 IN 절 1회 조회로 줄이기 위함."""
+    if not inquiry_ids:
+        return {}
+    connection = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(inquiry_ids))
+        rows = connection.execute(
+            f"SELECT * FROM product_inquiries WHERE market_name = ? AND inquiry_id IN ({placeholders})",
+            (market_name, *[str(x) for x in inquiry_ids]),
+        ).fetchall()
+        return {str(r["inquiry_id"]): dict(r) for r in rows}
+    finally:
+        connection.close()
+
+
 def insert_product_inquiry(
     market_name: str,
     inquiry_id: str,

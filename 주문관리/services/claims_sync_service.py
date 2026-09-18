@@ -234,6 +234,26 @@ def sync_exchange_requests(period_from=None, period_to=None) -> dict:
 
 # ---------------- 상품문의 ----------------
 
+def _product_inquiry_changed(existing: dict, raw: dict) -> bool:
+    """이미 저장된 문의와 쿠팡 최신값이 '실제로' 다른지 판단합니다(같으면 쓰기 생략).
+    update_product_inquiry의 COALESCE/NULLIF 규칙과 동일하게: 빈 값(신규 없음)은 변화로 안 봄."""
+    def s(v):
+        return "" if v is None else str(v)
+    if int(bool(raw.get("answered"))) != int(existing.get("answered") or 0):
+        return True
+    ac = s(raw.get("answer_content")).strip()
+    if ac and ac != s(existing.get("answer_content")):
+        return True
+    aa = s(raw.get("answered_at")).strip()
+    if aa and aa != s(existing.get("answered_at")):
+        return True
+    for field in ("order_ids", "seller_product_id", "vendor_item_id"):
+        rv = raw.get(field)
+        if rv is not None and s(rv) != s(existing.get(field)):
+            return True
+    return False
+
+
 def sync_product_inquiries(period_from=None, period_to=None) -> dict:
     accounts = _accounts()
     if not accounts:
@@ -253,19 +273,25 @@ def sync_product_inquiries(period_from=None, period_to=None) -> dict:
             continue
 
         total_fetched += len(raw_inquiries)
+        # ★기존 문의를 한 번에 조회(문의마다 find 하던 N+1 제거 → 클라우드 렉 감소).
+        existing_map = inquiry_repository.find_product_inquiries_map(
+            MARKET_NAME, [r["inquiry_id"] for r in raw_inquiries]
+        )
         for raw in raw_inquiries:
             raw_json = json.dumps(raw, ensure_ascii=False)
-            existing = inquiry_repository.find_product_inquiry(MARKET_NAME, raw["inquiry_id"])
+            existing = existing_map.get(str(raw["inquiry_id"]))
             if existing:
-                inquiry_repository.update_product_inquiry(
-                    existing["id"], raw["answered"], raw_json,
-                    seller_product_id=raw.get("seller_product_id"),
-                    vendor_item_id=raw.get("vendor_item_id"),
-                    order_ids=raw.get("order_ids"),
-                    answer_content=raw.get("answer_content"),
-                    answered_at=raw.get("answered_at"),
-                )
-                total_updated += 1
+                # ★실제로 바뀐 문의만 씁니다(대부분 그대로라 쓰기 생략 → 수집 훨씬 빠름).
+                if _product_inquiry_changed(existing, raw):
+                    inquiry_repository.update_product_inquiry(
+                        existing["id"], raw["answered"], raw_json,
+                        seller_product_id=raw.get("seller_product_id"),
+                        vendor_item_id=raw.get("vendor_item_id"),
+                        order_ids=raw.get("order_ids"),
+                        answer_content=raw.get("answer_content"),
+                        answered_at=raw.get("answered_at"),
+                    )
+                    total_updated += 1
             else:
                 inquiry_repository.insert_product_inquiry(
                     MARKET_NAME, raw["inquiry_id"], raw["market_item_id"], raw["content"],
