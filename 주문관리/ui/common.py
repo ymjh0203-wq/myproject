@@ -2575,58 +2575,82 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
             )
             return
 
-    # 클레임 표의 날짜 컬럼: '주문일'(주문한 날) 대신 '반품/취소 접수일'(클레임 접수일)로 보여줍니다.
-    #   ('최초 주문일시' 컬럼에 원주문 일시가 이미 있어, 여기선 접수일이 더 유용합니다.)
-    _receipt_date_col = "반품접수일" if claim_type == "RETURN" else "취소접수일"
-    # 예전 '주문일' 컬럼을 쓰던 사용자의 표시·순서 설정을 새 컬럼명으로 1회 이관(맞춰둔 레이아웃 유지).
-    _tkey = f"claim_table:{claim_type}"
-    _co = settings_repository.get_setting(f"column_order:{_tkey}")
-    if _co and "주문일" in _co.split("|"):
-        settings_repository.set_setting(
-            f"column_order:{_tkey}",
-            "|".join(_receipt_date_col if p == "주문일" else p for p in _co.split("|")),
+    # ★표는 배송중과 '같은 주문 컬럼'(상품명·수령자·통관 등)으로 보여줍니다.
+    #   클레임 정보(접수번호·사유·처리상태·접수일 등)는 오른쪽 '상세'에 넣습니다.
+    _date_label = "반품접수일" if claim_type == "RETURN" else "취소접수일"
+
+    def _claim_info_rows(c: dict):
+        status = ("출고중지요청(미처리)" if _is_release_stop_pending(c)
+                  else CLAIM_STATUS_LABELS.get(c.get("receipt_status"), c.get("receipt_status") or "-"))
+        return [
+            ("접수번호", c.get("receipt_id") or "-"),
+            (_date_label, (c.get("requested_at") or "")[:10] or "-"),
+            ("접수일시", c.get("requested_at") or "-"),
+            ("처리상태", status),
+            ("사유", c.get("reason_category1") or "-"),
+            ("상세사유분류", c.get("reason_category2") or "-"),
+            ("상세사유", c.get("reason_detail") or "-"),
+            ("출고중지", c.get("release_stop_status") or "-"),
+            ("완료구분", c.get("complete_confirm_type") or "-"),
+            ("완료일시", c.get("complete_confirm_date") or "-"),
+        ]
+
+    def _claim_detail(order: dict):
+        c = order.get("_claim") or {}
+        st.markdown(f"**{title} 상세**")
+        st.table(
+            pd.DataFrame(_claim_info_rows(c), columns=["항목", "값"]).set_index("항목")
         )
-        st.session_state.pop(f"{_tkey}_column_order", None)
-    if settings_repository.get_setting(f"sort_col:{_tkey}") == "주문일":
-        settings_repository.set_setting(f"sort_col:{_tkey}", _receipt_date_col)
+        if order.get("_has_order"):
+            st.divider()
+            render_cs_memo_editor(order)
+            st.markdown("**주문 상세내역**")
+            render_full_detail(order, reveal=True, with_cs_memo=False)
+        else:
+            st.caption("이 주문의 상세내역은 아직 앱에 수집되지 않았습니다. (해당 주문 단계에서 수집하면 보입니다)")
 
-    # 원주문에 CS메모가 있으면 그 클레임 줄을 붉게 표시(샵마인처럼) — 클레임엔 cs_memo가 없어서
-    # 주문번호로 원주문의 CS메모를 붙여 넣습니다. (표 색칠은 각 행의 'cs_memo' 값으로 판단됨)
-    _cs_memo_map = order_repository.get_cs_memo_map()
-    rows = [
-        {
-            "접수번호": c["receipt_id"],
-            "주문번호": c["market_order_id"] or "-",
-            "마켓": MARKET_DISPLAY_NAME.get(c.get("market_name"), c.get("market_name") or "-"),
-            _receipt_date_col: (c.get("requested_at") or "")[:10] or "-",
-            "최초 주문일시": _short_date(c.get("ordered_at")) if c.get("ordered_at") else "-",
-            "상점": c.get("market_account_name") or "-",
-            # 'cs_memo'는 표 색칠(붉게) 판단용. render_records_table이 표시 컬럼에서 제외하고,
-            # 행 색칠(원주문에 CS메모 있으면 붉게)에만 씁니다.
-            "cs_memo": _cs_memo_map.get(str(c.get("market_order_id"))) or "",
-            "처리상태": (
-                "출고중지요청(미처리)" if _is_release_stop_pending(c)
-                else CLAIM_STATUS_LABELS.get(c["receipt_status"], c["receipt_status"] or "-")
-            ),
-            "출고중지": c.get("release_stop_status") or "-",
-            "사유": c["reason_category1"] or "-",
-            "상세사유분류": c["reason_category2"] or "-",
-            "상세사유": c["reason_detail"] or "-",
-            "접수일시": c["requested_at"] or "-",
-            "완료구분": c["complete_confirm_type"] or "-",
-            "완료일시": c["complete_confirm_date"] or "-",
-        }
-        for c in claims
-    ]
+    # 각 클레임의 원주문을 '한 번에' 조회해(주문마다 따로 조회하는 N+1 방지), 배송중과 동일한
+    # 행(build_full_row)을 만듭니다. 원주문이 없으면 주문번호만 채운 최소 행으로 표시합니다.
+    _orders_map = order_repository.get_full_orders_by_market_ids(
+        [c.get("market_order_id") for c in claims]
+    )
+    _pairs = []  # (row, order)
+    for _i, c in enumerate(claims):
+        _moid = str(c.get("market_order_id") or "")
+        _order = _orders_map.get(_moid)
+        if _order:
+            _row = build_full_row(_order, _i + 1, reveal=True)
+            _ord = dict(_order)
+            _ord["_has_order"] = True
+        else:
+            _row = {"No": _i + 1, "주문번호": _moid or "-", "수령자": "-", "구매자": "-",
+                    "상품명": "(원주문 미수집)"}
+            _ord = {"shipping": None, "items": [], "market_order_id": _moid, "_has_order": False}
+        _ord["_claim"] = c
+        # 검색용 클레임 정보(표 컬럼엔 안 뜨지만 검색어로 찾을 수 있게 행에 실어둡니다)
+        _row["접수번호"] = c.get("receipt_id")
+        _row["_사유"] = c.get("reason_category1") or ""
+        _row["_상세사유"] = c.get("reason_detail") or ""
+        _pairs.append((_row, _ord))
 
-    filtered = [row for row in rows if matches_search(row, keyword)]
-
-    if not filtered:
+    _pairs = [(r, o) for (r, o) in _pairs if matches_search(r, keyword)]
+    if not _pairs:
         st.info("검색 결과가 없습니다.")
         return
 
-    # 발송대기와 같은 구성(항목순서·정렬·너비·높이 조절 + 행 클릭 상세패널)으로 보여줍니다.
-    render_records_table(filtered, key=f"claim_table:{claim_type}")
+    # 처음 열 때 표 컬럼을 '배송중'과 동일하게 맞춰줍니다(사용자가 배송중에 맞춰둔 컬럼 순서 복사).
+    _ckey = f"claim_ord:{claim_type}"
+    if not settings_repository.get_setting(f"column_order:{_ckey}"):
+        _src = (settings_repository.get_setting("column_order:shipping_del")
+                or settings_repository.get_setting("column_order:shipping_dep")
+                or settings_repository.get_setting("column_order:shipping"))
+        if _src:
+            settings_repository.set_setting(f"column_order:{_ckey}", _src)
+
+    render_full_table(
+        [r for r, _ in _pairs], [o for _, o in _pairs],
+        key=_ckey, detail_renderer=_claim_detail,
+    )
 
 
 # ==========================================================

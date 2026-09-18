@@ -787,6 +787,41 @@ def get_full_order_by_market_id(market_order_id: str):
         connection.close()
 
 
+def get_full_orders_by_market_ids(market_order_ids: list) -> dict:
+    """여러 마켓 주문번호로 풀 주문(items·shipping·상점명 포함)을 '한 번에' 조회합니다.
+    돌려주는 값: {market_order_id: order}. 같은 번호가 여럿이면 가장 최근 1개.
+    (반품/취소/환불완료 표에 원주문 컬럼을 붙일 때 주문마다 따로 조회하는 N+1을 막습니다.)"""
+    ids = [str(x) for x in dict.fromkeys(market_order_ids) if x]
+    if not ids:
+        return {}
+    connection = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(ids))
+        rows = connection.execute(
+            f"""
+            SELECT orders.*, market_accounts.market_name AS market_account_name
+            FROM orders
+            LEFT JOIN market_accounts ON market_accounts.id = orders.market_account_id
+            WHERE orders.market_order_id IN ({placeholders})
+            ORDER BY orders.ordered_at DESC
+            """,
+            tuple(ids),
+        ).fetchall()
+        orders = []
+        seen = set()
+        for r in rows:
+            order = dict(r)
+            moid = str(order["market_order_id"])
+            if moid in seen:
+                continue
+            seen.add(moid)
+            orders.append(order)
+        _attach_items_and_shipping(connection, orders)
+        return {str(o["market_order_id"]): o for o in orders}
+    finally:
+        connection.close()
+
+
 def total_quantity_for_market_order(market_order_id: str) -> int:
     """마켓 주문번호의 총 주문수량(취소 승인 시 cancelCountSum 계산용). 없으면 0."""
     connection = get_connection()
