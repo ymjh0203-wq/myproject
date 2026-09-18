@@ -24,6 +24,9 @@ import database
 
 # 외래키(FK) 때문에 "먼저 채워야 하는 표"부터 순서대로 나열합니다.
 # (예: order_items 는 orders.id 를 참조하므로 orders 를 먼저 넣어야 함)
+# ★모든 데이터 표를 빠짐없이 포함해야 합니다(하나라도 빠지면 그 표 데이터가 클라우드로
+#   안 옮겨져 '사라진 것처럼' 보입니다 — 실제로 taobao_link 등이 빠져 사고났음).
+#   FK 있는 표(order_cost·sms_send_log→orders)는 orders 뒤에 둡니다.
 TABLE_ORDER = [
     "market_accounts",
     "orders",
@@ -38,11 +41,20 @@ TABLE_ORDER = [
     "exchange_requests",
     "product_inquiries",
     "call_center_inquiries",
+    "order_cost",           # 매출정리 원가·배송비 (order_id PK, FK→orders)
+    "sms_send_log",         # 문자 발송 기록 (order_id FK→orders)
+    "taobao_link",          # 상품별 타오바오 링크
+    "return_compensation",  # 반품 보상관리 상태
+    "excel_templates",      # 엑셀 양식
 ]
 
 # id 컬럼이 자동증가(SERIAL)인 표들. 복사 후 시퀀스를 다시 맞춰줘야 합니다.
-# (app_settings=key, product_link_cache=vendor_item_id 는 자동증가 id가 없음)
-SERIAL_ID_TABLES = [t for t in TABLE_ORDER if t not in ("app_settings", "product_link_cache")]
+# (자동증가 id가 없는 표는 제외: app_settings=key, product_link_cache=vendor_item_id,
+#  return_compensation=receipt_id, order_cost=order_id)
+SERIAL_ID_TABLES = [
+    t for t in TABLE_ORDER
+    if t not in ("app_settings", "product_link_cache", "return_compensation", "order_cost")
+]
 
 
 def _sqlite_columns(sqlite_conn, table_name):
