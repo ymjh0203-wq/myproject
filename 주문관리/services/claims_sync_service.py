@@ -304,6 +304,22 @@ def sync_product_inquiries(period_from=None, period_to=None) -> dict:
                 )
                 total_new += 1
 
+        # ★정확성 보정: 쿠팡 상품문의 API는 '답변완료'되면 목록에서 빼버립니다(미답변만 남김).
+        #   그래서 우리 DB의 '미답변' 문의가 조회기간 안인데 이번 쿠팡 결과엔 없다면, 그건
+        #   답변완료돼 목록에서 빠진 것 → '답변완료'로 정리해 '미답변'에 잘못 남지 않게 합니다.
+        #   (기간을 명확히 아는 경우에만. 반품 reconcile과 같은 원리)
+        if period_from and period_to:
+            fetched_ids = {str(r["inquiry_id"]) for r in raw_inquiries}
+            try:
+                _stale = inquiry_repository.list_unanswered_product_inquiries(
+                    account["id"], period_from.isoformat(), period_to.isoformat())
+                for _inq in _stale:
+                    if str(_inq["inquiry_id"]) not in fetched_ids:
+                        inquiry_repository.mark_product_inquiry_resolved(_inq["id"])
+                        total_updated += 1
+            except Exception:  # noqa: BLE001
+                pass
+
     _mark_synced("product_inquiry", total_fetched)
     return _build_result(total_fetched, total_new, total_updated, errors)
 

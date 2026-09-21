@@ -44,6 +44,35 @@ def find_product_inquiries_map(market_name: str, inquiry_ids: list) -> dict:
         connection.close()
 
 
+def list_unanswered_product_inquiries(market_account_id: int, date_from: str, date_to: str) -> list:
+    """지정 상점의 '미답변' 상품문의 중 문의일(inquiry_at)이 [date_from, date_to] 안인 것들.
+    (수집 때 '쿠팡 목록엔 없는데 우리 DB엔 미답변'인 건 = 답변완료된 것으로 정리하기 위함)"""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            "SELECT id, inquiry_id FROM product_inquiries "
+            "WHERE market_account_id = ? AND answered = 0 "
+            "AND substr(inquiry_at, 1, 10) BETWEEN ? AND ?",
+            (market_account_id, date_from, date_to),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
+def mark_product_inquiry_resolved(row_id: int) -> None:
+    """쿠팡 상품문의 목록에서 사라진(=답변완료된) 미답변 문의를 '답변완료'로 표시합니다."""
+    connection = get_connection()
+    try:
+        connection.execute(
+            "UPDATE product_inquiries SET answered = 1, last_updated_at = ? WHERE id = ?",
+            (_now(), row_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def insert_product_inquiry(
     market_name: str,
     inquiry_id: str,
