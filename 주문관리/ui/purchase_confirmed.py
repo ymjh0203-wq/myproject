@@ -15,15 +15,34 @@ import streamlit as st
 
 import models
 from repositories import order_repository
+from services import sync_service
 from ui import common
 
 
 def render() -> None:
     st.header("구매확정")
     st.caption(
-        "배송완료 화면에서 '수집하기'를 누르면 **주문 후 30일이 지난 배송완료 주문**이 "
-        "자동으로 여기(구매확정)로 넘어옵니다. (쿠팡에 구매확정 조회 API가 없어 주문일 기준으로 판단)"
+        "쿠팡에 '구매확정' 조회 API가 없어 여기서 직접 수집은 안 됩니다. 대신 아래 '새로고침'을 "
+        "누르면 **주문 후 30일이 지난 배송완료 주문**이 구매확정으로 넘어오고, 쿠팡 정산 내역도 반영됩니다. "
+        "(배송완료 화면에서 '수집하기'를 눌러도 똑같이 자동 정리됩니다.)"
     )
+
+    # 🔄 새로고침: ① 주문 후 30일 지난 배송완료 → 구매확정으로 이동, ② 쿠팡 정산에 뜬
+    #   완료주문 → 구매확정 정리. (쿠팡에서 '새 주문을 가져오는' 게 아니라, 이미 있는 걸 정리·갱신)
+    if st.button("🔄 새로고침 (30일 지난 배송완료 → 구매확정 + 정산 반영)",
+                 type="primary", width="stretch"):
+        with st.spinner("구매확정 정리 중입니다..."):
+            # 긴 작업 중 배경 알람 새로고침이 끼어들어 끊지 않게 억제.
+            with common.suppress_bg_rerun():
+                r1 = sync_service.advance_confirmed_orders()   # 주문일 30일↑ 배송완료 → 구매확정
+                r2 = sync_service.advance_settled_orders()     # 쿠팡 정산 뜬 완료주문 → 구매확정
+        moved = (r1.get("advanced_count") or 0) + (r2.get("advanced_count") or 0)
+        errs = [e for e in (r1.get("error_message"), r2.get("error_message")) if e]
+        if errs:
+            st.warning(f"구매확정으로 이동 {moved}건 (일부 오류: {' / '.join(errs)})")
+        else:
+            st.success(f"구매확정으로 이동 {moved}건 · 정산 최신화 완료")
+        st.rerun()
 
     st.divider()
 
