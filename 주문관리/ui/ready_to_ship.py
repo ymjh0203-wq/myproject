@@ -1012,6 +1012,10 @@ def render() -> None:
     if do_ship:
         rows_to_ship = []
         blocked_rows = []  # 송장은 넣었지만 통관검증 미통과(불가)라 원래는 발송 못 하는 건
+        # ★표에서 체크한 주문이 있으면 '체크한 것만' 발송 대상으로 합니다.
+        #   (체크 안 했는데 GR 가송장이 자동입력돼 있는 건까지 딸려 발송되던 문제 수정)
+        #   아무것도 체크 안 했으면 예전처럼 송장 입력된 전체를 대상으로 합니다.
+        _checked_ids = {o.get("id") for o in selected_orders}
         for r in records:
             try:
                 idx = int(r.get(aggrid_table.IDX_COL))
@@ -1020,6 +1024,8 @@ def render() -> None:
             if not (0 <= idx < len(filtered_orders)):
                 continue
             order = filtered_orders[idx]
+            if _checked_ids and order.get("id") not in _checked_ids:
+                continue  # 체크한 주문만 처리
             courier_code = common.COURIER_LABEL_TO_CODE.get(r.get("택배사"))
             invoice = str(r.get("송장번호") or "").strip()
             # ★표에 송장이 비어있으면("-"/빈칸) 배대지 가송장(quickstar_invoice, DB)으로 폴백.
