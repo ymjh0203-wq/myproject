@@ -341,6 +341,48 @@ def coupang_product_url(vendor_item_id: str, product_id: str = None, item_id: st
     return f"https://www.coupang.com/vp/products/{vendor_item_id}?vendorItemId={vendor_item_id}"
 
 
+_PRODUCT_LINK_CACHE = {}      # vendor_item_id -> row(dict) 또는 None
+_PRODUCT_LINK_CACHE_AT = 0.0  # 마지막으로 비운 시각
+
+
+def _product_link_cache() -> dict:
+    """상품링크 캐시(모듈 전역). 5분마다 비워 갱신분을 반영합니다."""
+    global _PRODUCT_LINK_CACHE_AT
+    if time.time() - _PRODUCT_LINK_CACHE_AT > 300:
+        _PRODUCT_LINK_CACHE.clear()
+        _PRODUCT_LINK_CACHE_AT = time.time()
+    return _PRODUCT_LINK_CACHE
+
+
+def warm_product_links(orders: list) -> None:
+    """여러 주문의 상품 링크를 '한 번에'(IN절) 미리 불러 캐시에 채웁니다.
+    ★build_full_row가 표의 상품마다 DB를 치던 첫 로드 렉을 없앱니다. 표 렌더 전에 호출."""
+    cache = _product_link_cache()
+    ids = []
+    for o in (orders or []):
+        for it in (o.get("items") or []):
+            vid = it.get("market_item_id")
+            if vid and str(vid) not in cache:
+                ids.append(str(vid))
+    if not ids:
+        return
+    got = product_link_repository.get_map(ids)
+    for vid in set(ids):
+        cache[vid] = got.get(vid)  # 없으면 None도 캐시(다시 안 치게)
+
+
+def _cached_product_link(vendor_item_id: str):
+    """상품(vendor_item_id)의 저장된 productId/itemId를 조회해 '재사용(캐시)'합니다.
+    같은 상품은 1회만 DB 조회. warm_product_links로 미리 채워두면 첫 로드도 빠릅니다."""
+    if not vendor_item_id:
+        return None
+    cache = _product_link_cache()
+    key = str(vendor_item_id)
+    if key not in cache:
+        cache[key] = product_link_repository.get(key)
+    return cache[key]
+
+
 def _item_link_info(item: dict) -> dict:
     """
     상품 항목 하나에 대해 캐시된 productId/itemId를 붙여서 돌려줍니다.
@@ -348,7 +390,7 @@ def _item_link_info(item: dict) -> dict:
       - 코드표시: 쿠팡 상품 페이지에 보이는 "쿠팡상품번호" (productId - itemId)
     """
     vendor_item_id = item.get("market_item_id") or ""
-    cached = product_link_repository.get(vendor_item_id) if vendor_item_id else None
+    cached = _cached_product_link(vendor_item_id)
     product_id = (cached or {}).get("product_id") or ""
     item_id = (cached or {}).get("item_id") or ""
     url = coupang_product_url(vendor_item_id, product_id, item_id)
@@ -1305,8 +1347,11 @@ def build_full_row(order: dict, row_no: int, reveal: bool = False) -> dict:
 _REPLACE_RULES_SETTING = "replace_rules"
 
 
+@st.cache_data(ttl=30, show_spinner=False)
 def get_replace_rules() -> list:
-    """저장된 치환 규칙 목록을 돌려줍니다. 각 규칙: {col, find, replace, mode}."""
+    """저장된 치환 규칙 목록을 돌려줍니다. 각 규칙: {col, find, replace, mode}.
+    ★build_full_row가 표의 행마다 이걸 DB에서 읽던 것을 캐시로 1회만 읽게 합니다
+      (클라우드 렉 방지). 규칙을 저장하면 set_replace_rules가 캐시를 비웁니다."""
     import json
     raw = settings_repository.get_setting(_REPLACE_RULES_SETTING)
     if not raw:
@@ -1322,6 +1367,10 @@ def set_replace_rules(rules: list) -> None:
     """치환 규칙 목록을 저장합니다."""
     import json
     settings_repository.set_setting(_REPLACE_RULES_SETTING, json.dumps(rules, ensure_ascii=False))
+    try:
+        get_replace_rules.clear()  # 저장 즉시 캐시 무효화
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def apply_replace_rules(row: dict) -> dict:
@@ -2619,6 +2668,7 @@ def render_claim_list(claim_type: str, title: str, empty_message: str,
     _orders_map = order_repository.get_full_orders_by_market_ids(
         [c.get("market_order_id") for c in claims]
     )
+    warm_product_links(list(_orders_map.values()))  # 상품링크 배치 선조회(첫 로드 렉 방지)
     _pairs = []  # (row, order)
     for _i, c in enumerate(claims):
         _moid = str(c.get("market_order_id") or "")

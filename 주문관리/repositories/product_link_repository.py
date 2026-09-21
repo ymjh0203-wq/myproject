@@ -27,6 +27,25 @@ def get(vendor_item_id: str) -> dict:
         connection.close()
 
 
+def get_map(vendor_item_ids: list) -> dict:
+    """여러 vendorItemId의 캐시를 '한 번에' 조회 → {vendor_item_id: {...}}.
+    (표의 상품마다 따로 조회하는 N+1을 IN절 1회로 줄여 클라우드 렉을 없앱니다.)"""
+    ids = [str(x) for x in dict.fromkeys(vendor_item_ids) if x]
+    if not ids:
+        return {}
+    connection = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(ids))
+        rows = connection.execute(
+            "SELECT vendor_item_id, product_id, item_id, product_name, item_name "
+            f"FROM product_link_cache WHERE vendor_item_id IN ({placeholders})",
+            tuple(ids),
+        ).fetchall()
+        return {str(r["vendor_item_id"]): dict(r) for r in rows}
+    finally:
+        connection.close()
+
+
 def save_many(product_id: str, items: list, product_name: str = "") -> None:
     """
     상품조회 한 번으로 알아낸 그 상품의 모든 옵션(vendorItemId -> itemId/옵션명)을

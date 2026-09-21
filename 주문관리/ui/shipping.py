@@ -477,6 +477,7 @@ def render() -> None:
     # 전화번호·개인통관고유부호는 실제 업무에 매번 필요해서 항상 그대로 보여줍니다.
     reveal = True
 
+    common.warm_product_links(orders)  # 상품링크 배치 선조회(첫 로드 렉 방지)
     all_rows = [common.build_full_row(order, idx + 1, reveal=reveal) for idx, order in enumerate(orders)]
 
     filtered_pairs = [(order, row) for order, row in zip(orders, all_rows) if common.matches_search(row, keyword)]

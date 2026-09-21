@@ -22,6 +22,7 @@ from services import sync_service
 from ui import common
 
 
+
 @st.dialog("발송대기로 이동")
 def _confirm_move_to_ready(orders: list) -> None:
     """
@@ -62,30 +63,13 @@ def render() -> None:
     # ------------------------------------------------------
     st.selectbox("쇼핑몰계정그룹", ["쿠팡"], disabled=True, help="지금은 쿠팡만 연동되어 있습니다. 다른 마켓은 추후 추가 예정입니다.")
     period_from, period_to = common.render_period_picker("new_orders", "결제일시(시작)", "결제일시(종료)")
-    collect_clicked = st.button("수집하기", type="primary", width="stretch")
-
-    if collect_clicked:
-        if period_from > period_to:
-            st.error("시작일이 종료일보다 늦을 수 없습니다.")
-        else:
-            # 신규주문만이 아니라 전 단계를 함께 최신화합니다. 그래야 이미 발송/배송으로
-            # 넘어간 주문이 예전 단계에 그대로 남지 않습니다.
-            result = common.collect_all_stages_with_progress(period_from, period_to)
-            if result["status"] == "fail":
-                st.error(f"주문 수집 실패: {result['error_message']}")
-            else:
-                closed = result.get("closed_count") or 0
-                message = (
-                    f"수집 완료 - 전체 단계 최신화 "
-                    f"(신규 {result['new_count']}건, 갱신 {result['updated_count']}건"
-                    + (f", 취소·반품 정리 {closed}건" if closed else "")
-                    + ")"
-                )
-                if result["error_message"]:
-                    st.warning(message + f"\n일부 오류: {result['error_message']}")
-                else:
-                    st.success(message)
-                st.rerun()
+    # 수집은 백그라운드로 돌아, 도중에 다른 메뉴로 옮겨도 취소되지 않고 끝까지 진행됩니다.
+    # 이 화면은 '신규주문(결제완료)'만 최신화합니다. 다른 단계(발송대기/배송중 등)에서
+    # 각자 수집을 동시에 눌러도 서로 막지 않습니다. (취소·반품 정리도 함께)
+    common.render_background_collect(
+        period_from, period_to, key="new_orders",
+        stages=[models.WORK_STATUS_NEW], reconcile=True,
+    )
 
     common.render_live_count_banner(models.WORK_STATUS_NEW)
 
@@ -96,34 +80,22 @@ def render() -> None:
     # ------------------------------------------------------
     orders = order_repository.list_orders_by_work_status(models.WORK_STATUS_NEW)
 
+    # ④ 수집결과내 검색(필터) — 주문이 없어도 '항상' 보입니다(발송대기처럼).
+    keyword = st.text_input(
+        "🔎 수집결과내 검색(필터)",
+        placeholder="주문번호 · 상품명 · 수령자 · 구매자 등으로 검색",
+        key="new_orders_search",
+        help="입력하면 아래 표가 실시간으로 걸러집니다. (수집한 결과 안에서 필터)",
+    )
+
     if not orders:
         st.info("신규주문이 없습니다. 위 '수집하기' 버튼을 눌러보세요.")
         return
 
-    col_search, col_move = st.columns([2, 1])
-    with col_search:
-        keyword = st.text_input("수집결과내 검색", placeholder="주문번호, 상품명, 수령자 등으로 검색")
-    with col_move:
-        st.write("")
-        move_clicked = st.button(
-            "선택 주문 발송대기로 이동",
-            width="stretch",
-            help="표 왼쪽 체크박스로 선택한 주문들을 발송대기로 이동합니다. (머리글 체크박스로 전체선택)",
-        )
-
     # 전화번호·개인통관고유부호는 실제 발송 업무에 매번 필요해서 항상 그대로 보여줍니다.
     reveal = True
+    common.warm_product_links(orders)  # 상품링크 배치 선조회(첫 로드 렉 방지)
     all_rows = [common.build_full_row(order, idx + 1, reveal=reveal) for idx, order in enumerate(orders)]
-
-    excel_rows = [common.build_full_row(order, idx + 1, reveal=True) for idx, order in enumerate(orders)]
-    excel_bytes = common.build_excel_bytes(excel_rows)
-    st.download_button(
-        "엑셀파일생성",
-        data=excel_bytes,
-        file_name="신규주문.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="new_orders_excel_download",
-    )
 
     filtered_pairs = [
         (order, row) for order, row in zip(orders, all_rows) if common.matches_search(row, keyword)
@@ -136,6 +108,13 @@ def render() -> None:
     filtered_orders = [pair[0] for pair in filtered_pairs]
     filtered_rows = [pair[1] for pair in filtered_pairs]
 
+    # 샵마인식 액션 버튼 바(공용). 신규주문의 주 버튼은 '주문확인'(발송대기 이동)입니다.
+    # 통계·표시항목설정·바꾸기설정·엑셀양식설정·엑셀파일생성은 바 안에서 처리됩니다.
+    move_clicked = common.render_shopmine_action_bar(
+        "new_orders", filtered_orders,
+        primary_label="📦 주문확인", primary_help="선택한 주문을 발송대기로 이동합니다.",
+    )
+
     # 표에 체크박스(부분선택 + 머리글 전체선택). 체크한 행이 1건이면 오른쪽에 상세가 뜹니다.
     # 표+상세를 fragment로 그려, 체크/해제할 때 화면이 위로 튀지 않습니다.
     def _no_detail(selected_order):
@@ -145,11 +124,15 @@ def render() -> None:
             key=f"no_move_{selected_order['id']}",
             width="stretch",
         ):
-            _confirm_move_to_ready([selected_order])
+            # 상세패널은 fragment 안이라, 공통 헬퍼로 예약 → 메인에서 다이얼로그를 엽니다.
+            common.open_dialog_deferred(_confirm_move_to_ready, [selected_order])
 
     _, selected_orders, _, _ = common.render_full_table(
         filtered_rows, filtered_orders, key="new_orders", detail_renderer=_no_detail, multi_select=True
     )
+
+    # 표 아래 합계 요약 바 (샵마인 하단 상태바처럼) — 지금 목록(검색 반영) 기준.
+    common.render_order_summary_bar(filtered_orders)
 
     if move_clicked:
         if not selected_orders:
