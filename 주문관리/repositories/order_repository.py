@@ -787,6 +787,26 @@ def get_full_order_by_market_id(market_order_id: str):
         connection.close()
 
 
+def find_orders_map(market_name: str, market_order_ids: list) -> dict:
+    """수집용: 여러 주문을 '한 번에' 조회 → {(market_order_id, shipment_box_id): order_row}.
+    (수집 때 주문마다 find_by_market_order로 DB를 치던 N+1을 IN절 1회로 줄임)
+    변화 없는 주문을 건너뛸지 판단하려고 raw_response_json·id·work_status를 포함해 돌려줍니다."""
+    ids = [str(x) for x in dict.fromkeys(market_order_ids) if x]
+    if not ids:
+        return {}
+    connection = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(ids))
+        rows = connection.execute(
+            f"SELECT id, market_order_id, shipment_box_id, work_status, raw_response_json "
+            f"FROM orders WHERE market_name = ? AND market_order_id IN ({placeholders})",
+            (market_name, *ids),
+        ).fetchall()
+        return {(str(r["market_order_id"]), str(r["shipment_box_id"])): dict(r) for r in rows}
+    finally:
+        connection.close()
+
+
 def get_full_orders_by_market_ids(market_order_ids: list) -> dict:
     """여러 마켓 주문번호로 풀 주문(items·shipping·상점명 포함)을 '한 번에' 조회합니다.
     돌려주는 값: {market_order_id: order}. 같은 번호가 여럿이면 가장 최근 1개.

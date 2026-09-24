@@ -221,8 +221,19 @@ def sync_orders_for_stage(work_status: str, period_from=None, period_to=None) ->
             continue
 
         total_fetched += len(raw_orders)
+        # ★기존 주문을 한 번에 조회(주문마다 find 하던 N+1 제거) + '안 바뀐 주문은 쓰기 생략'.
+        #   원본 JSON이 그대로고 이미 이 단계(이상)면 update/상품/배송 재기록을 건너뜁니다.
+        #   → 재수집 때 대부분 그대로라 클라우드 왕복이 확 줄어듭니다.
+        _existing_map = order_repository.find_orders_map(
+            MARKET_NAME, [r["market_order_id"] for r in raw_orders])
+        _rank = {ws: idx for idx, ws in enumerate(models.WORK_STATUS_LIST)}
         for raw_order in raw_orders:
             try:
+                _key = (str(raw_order["market_order_id"]), str(raw_order["shipment_box_id"]))
+                _ex = _existing_map.get(_key)
+                if _ex and (_ex.get("raw_response_json") or "") == json.dumps(raw_order, ensure_ascii=False) \
+                        and _rank.get(_ex.get("work_status"), -1) >= _rank.get(work_status, -1):
+                    continue  # 원본 동일 + 이미 이 단계(이상) → 쓸 게 없음(생략)
                 result = _save_one_order(raw_order, work_status, account["id"])
                 if result == "new":
                     total_new += 1
