@@ -210,19 +210,23 @@ def _collect_clicked(period_from, period_to) -> None:
 def _unified_rows() -> list:
     """상품문의 + 콜센터문의를 같은 형식(문의종류 칸 추가)으로 합쳐서 돌려줍니다."""
     rows = []
-    for i in inquiry_repository.list_product_inquiries():
+    _inqs = inquiry_repository.list_product_inquiries()
+    # ★상품정보·상품링크를 '한 번에' 미리 조회(문의마다 DB를 치던 N+1 제거 → CS문의 클릭 렉 해결).
+    _pinfo_map = inquiry_repository.find_product_info_map(_inqs)
+    _plink_map = product_link_repository.get_map([i.get("vendor_item_id") for i in _inqs])
+    for i in _inqs:
         # 쿠팡 문의 응답에는 상품명이 없고 ID만 들어있어서, 이미 수집해둔 주문
         # 데이터에서 그 ID로 상품명/옵션을 찾아 붙여줍니다.
-        # 쿠팡 상품조회로 상품명·'정확한 옵션명(vendorItemId 기준)'·링크정보를 확보(캐시).
-        # 문의의 vendorItemId로 조회하므로, 주문 매칭이 상품단위여도 옵션을 정확히 알 수 있습니다.
-        resolved = product_link_service.resolve_inquiry_product(
-            i.get("seller_product_id"), i.get("vendor_item_id"), i.get("market_account_id")
-        )
+        product = _pinfo_map.get(i["id"])
+        # 주문에서 옵션까지 정확히 못 맞춘 경우에만 쿠팡 상품조회(캐시됨)로 옵션명을 보충합니다.
+        if product and product.get("matched_by") == "옵션":
+            resolved = None
+        else:
+            resolved = product_link_service.resolve_inquiry_product(
+                i.get("seller_product_id"), i.get("vendor_item_id"), i.get("market_account_id")
+            )
         resolved_option = (resolved or {}).get("option_name") or ""
 
-        product = inquiry_repository.find_product_info(
-            i.get("seller_product_id"), i.get("vendor_item_id"), i.get("order_ids")
-        )
         if product:
             product_name = product["product_name"] or (resolved or {}).get("product_name") or "-"
             if product["matched_by"] == "옵션" and product.get("option_name"):
@@ -241,7 +245,7 @@ def _unified_rows() -> list:
         _vid = i.get("vendor_item_id")
         product_url = ""
         if _vid:
-            _cached = product_link_repository.get(_vid)
+            _cached = _plink_map.get(str(_vid))
             product_url = common.coupang_product_url(
                 _vid, (_cached or {}).get("product_id"), (_cached or {}).get("item_id")
             )

@@ -227,6 +227,68 @@ def find_product_info(seller_product_id: str, vendor_item_id: str, order_ids: st
         connection.close()
 
 
+def find_product_info_map(inquiries: list) -> dict:
+    """여러 문의의 상품정보(상품명·옵션)를 '한 번에' 조회 → {inquiry row id: product_info}.
+    ★문의마다 find_product_info로 DB를 치던 N+1(657건 = 수백 쿼리, 클라우드 렉)을
+      vendorItemId/주문번호/상품코드별 IN절 3회로 줄입니다. 판정 우선순위는 find_product_info와 동일."""
+    if not inquiries:
+        return {}
+    vids, moids, codes = set(), set(), set()
+    for i in inquiries:
+        if i.get("vendor_item_id"):
+            vids.add(str(i["vendor_item_id"]))
+        for o in str(i.get("order_ids") or "").split(","):
+            if o.strip():
+                moids.add(o.strip())
+        if i.get("seller_product_id"):
+            codes.add(str(i["seller_product_id"]))
+    by_vid, by_moid, by_code = {}, {}, {}
+    connection = get_connection()
+    try:
+        if vids:
+            ph = ", ".join(["?"] * len(vids))
+            for r in connection.execute(
+                f"SELECT market_item_id, product_name, option_name FROM order_items WHERE market_item_id IN ({ph})",
+                tuple(vids)).fetchall():
+                by_vid.setdefault(str(r["market_item_id"]), dict(r))
+        if moids:
+            ph = ", ".join(["?"] * len(moids))
+            for r in connection.execute(
+                "SELECT orders.market_order_id AS moid, order_items.product_name, order_items.option_name "
+                f"FROM order_items JOIN orders ON orders.id = order_items.order_id "
+                f"WHERE orders.market_order_id IN ({ph})",
+                tuple(moids)).fetchall():
+                by_moid.setdefault(str(r["moid"]), dict(r))
+        if codes:
+            ph = ", ".join(["?"] * len(codes))
+            for r in connection.execute(
+                f"SELECT seller_product_code, product_name FROM order_items WHERE seller_product_code IN ({ph})",
+                tuple(codes)).fetchall():
+                by_code.setdefault(str(r["seller_product_code"]), dict(r))
+    finally:
+        connection.close()
+    result = {}
+    for i in inquiries:
+        info = None
+        vid = str(i.get("vendor_item_id") or "")
+        if vid and vid in by_vid:
+            r = by_vid[vid]
+            info = {"product_name": r["product_name"], "option_name": r["option_name"], "matched_by": "옵션"}
+        if info is None:
+            for o in str(i.get("order_ids") or "").split(","):
+                o = o.strip()
+                if o and o in by_moid:
+                    r = by_moid[o]
+                    info = {"product_name": r["product_name"], "option_name": r["option_name"], "matched_by": "주문"}
+                    break
+        if info is None:
+            code = str(i.get("seller_product_id") or "")
+            if code and code in by_code:
+                info = {"product_name": by_code[code]["product_name"], "option_name": None, "matched_by": "상품"}
+        result[i["id"]] = info
+    return result
+
+
 def list_product_inquiries() -> list:
     connection = get_connection()
     try:

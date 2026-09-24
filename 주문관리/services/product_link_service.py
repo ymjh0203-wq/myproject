@@ -59,13 +59,31 @@ def ensure_links_for_order(order: dict) -> None:
             )
 
 
+_RESOLVE_CACHE = {}       # vendor_item_id(또는 seller_product_id) -> 결과(dict 또는 None)
+_RESOLVE_CACHE_AT = 0.0   # 마지막으로 비운 시각
+
+
 def resolve_inquiry_product(seller_product_id: str, vendor_item_id: str, market_account_id) -> dict:
-    """
-    상품문의 등에서 '주문에 없는 상품'의 상품명/옵션명을 쿠팡 상품조회로 알아냅니다.
-    캐시에 있으면 API 없이 바로 돌려주고, 없으면 한 번 조회해 캐시에 저장합니다.
-    반환: {"product_name": str, "option_name": str} 또는 조회 실패 시 None.
-    (화면 렌더 중 호출되므로 실패해도 조용히 None을 돌려줍니다)
-    """
+    """상품문의 등에서 '주문에 없는 상품'의 상품명/옵션명을 알아냅니다.
+    ★결과를 5분간 캐시(실패·빈값 포함)해서, 목록이 매 렌더(문의 클릭 등)마다 쿠팡 API를
+      다시 치지 않게 합니다 — CS문의 클릭이 느리던 원인. 성공/실패 모두 캐시해 반복 호출 방지."""
+    import time
+    global _RESOLVE_CACHE_AT
+    if time.time() - _RESOLVE_CACHE_AT > 300:
+        _RESOLVE_CACHE.clear()
+        _RESOLVE_CACHE_AT = time.time()
+    _key = str(vendor_item_id or seller_product_id or "")
+    if _key and _key in _RESOLVE_CACHE:
+        return _RESOLVE_CACHE[_key]
+    result = _resolve_inquiry_product_uncached(seller_product_id, vendor_item_id, market_account_id)
+    if _key:
+        _RESOLVE_CACHE[_key] = result
+    return result
+
+
+def _resolve_inquiry_product_uncached(seller_product_id: str, vendor_item_id: str, market_account_id) -> dict:
+    """(캐시 미스일 때만 호출) 캐시에 있으면 API 없이 바로, 없으면 한 번 쿠팡 상품조회해 저장.
+    반환: {"product_name": str, "option_name": str} 또는 조회 실패 시 None."""
     if vendor_item_id:
         cached = product_link_repository.get(vendor_item_id)
         if cached and cached.get("product_name"):
