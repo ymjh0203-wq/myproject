@@ -209,15 +209,29 @@ def sync_orders_for_stage(work_status: str, period_from=None, period_to=None) ->
     error_messages = []
     last_mode = "mock"
 
-    for account in accounts:
+    # ★계정별 조회는 대부분 쿠팡 API 대기 시간 → 여러 계정을 '동시에' 가져옵니다.
+    #   (순차면 계정 조회시간이 합산, 병렬이면 가장 느린 계정 하나로 수렴)
+    #   저장(DB 쓰기)은 커넥션 풀 경합을 피하려고 아래에서 순차로 처리합니다.
+    def _fetch_one(account):
         client = _client_for_account(account)
-        last_mode = client.mode
-
         try:
-            raw_orders = _fetch_statuses_with_retry(client, market_statuses, period_from, period_to)
+            return account, client, _fetch_statuses_with_retry(
+                client, market_statuses, period_from, period_to), None
         except CoupangApiError as error:
+            return account, client, None, error
+
+    if len(accounts) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(accounts))) as _ex:
+            fetch_results = list(_ex.map(_fetch_one, accounts))
+    else:
+        fetch_results = [_fetch_one(accounts[0])]
+
+    for account, client, raw_orders, fetch_error in fetch_results:
+        last_mode = client.mode
+        if fetch_error is not None:
             total_errors += 1
-            error_messages.append(f"[{account['market_name']}] {error}")
+            error_messages.append(f"[{account['market_name']}] {fetch_error}")
             continue
 
         total_fetched += len(raw_orders)
@@ -409,31 +423,47 @@ def advance_delivered_orders(progress=None) -> dict:
     total_closed = 0
     errors = []
 
-    for acc_i, account in enumerate(accounts):
+    # 1) 계정별 배송중 주문·조회기간 준비(DB 읽기, 빠름).
+    floor = date.today() - timedelta(days=120)
+    fetch_to = date.today()
+    jobs = []  # (account, shipping, fetch_from)
+    for account in accounts:
         shipping = order_repository.list_active_orders_for_account(
             account["id"], [models.WORK_STATUS_SHIPPING]
         )
         if not shipping:
             continue
         total_scanned += len(shipping)
-
-        # 조회 기간 = 가장 오래된 배송중 주문일 ~ 오늘 (최대 120일 전까지만).
-        floor = date.today() - timedelta(days=120)
         dates = [d for d in (_order_date(o) for o in shipping) if d]
         fetch_from = max(min(dates) - timedelta(days=2), floor) if dates else floor
-        fetch_to = date.today()
+        jobs.append((account, shipping, fetch_from))
 
-        client = _client_for_account(account)
+    # 2) 계정 조회(쿠팡 API 대기)는 '동시에' — 순차 합산 대신 가장 느린 계정으로 수렴.
+    #    배송지시·배송중·배송완료·업체직송(무추적)을 함께 조회해 각 주문의 '현재 쿠팡 상태'를 확보.
+    #    NONE_TRACKING은 택배 추적이 없어 FINAL_DELIVERY 스캔이 안 와서 배송중에 갇히던 문제 때문.
+    def _fetch_live(job):
+        account, _shipping, fetch_from = job
         try:
-            # 배송지시·배송중·배송완료·업체직송(무추적)을 함께 조회해서, 각 주문의 '현재 쿠팡 상태'를 확보합니다.
-            # NONE_TRACKING(업체직송/직접배송)은 택배 추적이 없어 FINAL_DELIVERY 스캔이 안 와서
-            # 배송중에 영영 갇히던 문제가 있었습니다. 이 상태를 함께 조회해 배송완료로 전진시킵니다.
             live = _fetch_statuses_with_retry(
-                client, ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY", "NONE_TRACKING"], fetch_from, fetch_to
-            )
+                _client_for_account(account),
+                ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY", "NONE_TRACKING"], fetch_from, fetch_to)
+            return job, live, None
         except CoupangApiError as error:
+            return job, None, error
+
+    if len(jobs) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(jobs))) as _ex:
+            fetched = list(_ex.map(_fetch_live, jobs))
+    else:
+        fetched = [_fetch_live(j) for j in jobs]
+
+    # 3) 처리(DB 쓰기)는 순차 — 커넥션 풀 경합 방지.
+    for acc_i, (job, live, fetch_error) in enumerate(fetched):
+        account, shipping, fetch_from = job
+        if fetch_error is not None:
             # 이 계정은 조회 실패 → 안전을 위해 건드리지 않습니다.
-            errors.append(f"[{account['market_name']}] {error}")
+            errors.append(f"[{account['market_name']}] {fetch_error}")
             continue
 
         status_by_box = {str(o["shipment_box_id"]): (o.get("market_status") or "").upper()
@@ -470,7 +500,7 @@ def advance_delivered_orders(progress=None) -> dict:
 
         if progress:
             try:
-                progress(acc_i + 1, len(accounts))
+                progress(acc_i + 1, len(fetched))
             except Exception:  # noqa: BLE001
                 pass
 
