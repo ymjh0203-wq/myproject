@@ -106,6 +106,31 @@ def update_claim(
 _RESOLVED_STATUS = "RETURNS_COMPLETED"
 
 
+def market_ids_with_active_returns(market_order_ids: list) -> set:
+    """주어진 주문번호들 중, '진행 중(완료 아님) 반품(RETURN) 접수'가 있는 주문번호 집합을
+    한 번에 돌려줍니다. (완료=RETURNS_COMPLETED 만 완료로 봄 — 앱 전체 기준과 동일)
+    ★쓰임: 정산 자동전진(구매확정)이 '반품 진행 중'인 주문을 구매확정으로 덮지 않게 거르는 용도."""
+    ids = [str(x) for x in dict.fromkeys(market_order_ids) if x]
+    if not ids:
+        return set()
+    connection = get_connection()
+    try:
+        placeholders = ",".join("?" for _ in ids)
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT market_order_id
+            FROM claims
+            WHERE claim_type = 'RETURN'
+              AND receipt_status <> ?
+              AND market_order_id IN ({placeholders})
+            """,
+            (_RESOLVED_STATUS, *ids),
+        ).fetchall()
+        return {str(r["market_order_id"]) for r in rows}
+    finally:
+        connection.close()
+
+
 def reconcile_absent_pending(
     claim_type: str, market_account_id, period_from, period_to, seen_receipt_ids, completed_statuses,
 ) -> int:

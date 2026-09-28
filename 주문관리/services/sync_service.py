@@ -24,7 +24,7 @@ from datetime import date, datetime, timedelta
 
 import models
 from integrations.coupang_client import CoupangApiError, CoupangClient
-from repositories import market_repository, order_repository, settings_repository
+from repositories import claims_repository, market_repository, order_repository, settings_repository
 
 
 def _fetch_statuses_with_retry(client, market_statuses, period_from, period_to, attempts=3):
@@ -548,8 +548,15 @@ def advance_settled_orders(recognition_days: int = 45, progress=None) -> dict:
         if not settled_ids:
             continue
         active_orders = order_repository.list_active_orders_for_account(account["id"], active)
+        # ★반품 진행 중인 주문은 구매확정으로 올리지 않습니다.
+        #   쿠팡 정산내역에 떠도(매출인식), 그 주문에 '완료 안 된 반품접수'가 있으면
+        #   구매확정은 아직 이릅니다. 반품이 완료되면 close/reconcile가 주문종료로,
+        #   철회되면 다음 정산수집 때 구매확정으로 올립니다(자동 회복).
+        _return_active = claims_repository.market_ids_with_active_returns(
+            [o["market_order_id"] for o in active_orders])
         for order in active_orders:
-            if str(order["market_order_id"]) in settled_ids and \
+            _moid = str(order["market_order_id"])
+            if _moid in settled_ids and _moid not in _return_active and \
                     confirmed_rank > order_rank.get(order["work_status"], -1):
                 order_repository.update_work_status(
                     order["id"], models.WORK_STATUS_PURCHASE_CONFIRMED, changed_by="auto-settled"
