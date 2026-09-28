@@ -94,6 +94,13 @@ def render() -> None:
         "표 왼쪽 체크박스를 체크하면 오른쪽 옆에서 메모를 보고 수정할 수 있습니다. "
         "컬럼(항목)은 마우스로 끌어 순서를 바꿀 수 있고 자동 저장됩니다."
     )
+    # 여러 건을 체크한 뒤 한 번에 처리완료로 바꾸는 버튼. (표 위에 둬야 클릭 시 전체 새로고침되며
+    # fragment가 세션에 저장한 '선택 목록'을 아래에서 읽어 처리합니다.)
+    bulk_done_clicked = st.button(
+        "✅ 선택한 CS메모 일괄 처리완료", key="cs_memo_bulk_done", type="primary",
+        help="표 왼쪽 체크박스로 여러 건을 고른 뒤 누르면, 고른 CS메모를 한 번에 처리완료로 바꿉니다.",
+    )
+
     def _cs_memo_detail(order):
         # 처리완료 토글 버튼 — 완료로 바꾸면 목록에서 그 줄이 초록색으로 표시됩니다.
         _done = bool(order.get("cs_memo_done"))
@@ -116,3 +123,18 @@ def render() -> None:
         empty_caption="표 왼쪽 체크박스를 체크하면 여기서 메모를 보고 수정·완료처리할 수 있습니다.",
         ratios=(2, 1), height=420,
     )
+
+    # 일괄 처리완료 — 위 버튼 클릭(전체 새로고침)이면, fragment가 세션에 저장한 '선택 목록'을
+    # 읽어 체크한 주문들의 CS메모를 한 번에 처리완료로 바꿉니다. (이미 완료된 건 그대로 둠)
+    if bulk_done_clicked:
+        selected = st.session_state.get("cs_memo_selected_orders", []) or []
+        if not selected:
+            st.warning("처리완료할 CS메모를 표 왼쪽 체크박스로 먼저 선택해주세요.")
+        else:
+            changed = 0
+            for o in selected:
+                if not o.get("cs_memo_done"):
+                    order_repository.set_cs_memo_done(o["id"], True)
+                    changed += 1
+            st.success(f"✅ 선택한 {len(selected)}건 중 {changed}건을 처리완료로 바꿨습니다.")
+            st.rerun()
