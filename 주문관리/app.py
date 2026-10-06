@@ -31,6 +31,7 @@ from ui import (
     exchange_orders,
     excel_templates,
     home,
+    inspection,
     integrated_orders,
     monthly_sales,
     new_orders,
@@ -98,6 +99,7 @@ common.render_alarm_bar()
 # 이 목록의 순서가 그대로 상단 탭 메뉴 순서가 됩니다.
 MENU_ITEMS = [
     ("홈", home.render),
+    ("점검판", inspection.render),
     ("신규주문", new_orders.render),
     ("발송대기", ready_to_ship.render),
     ("배송중", shipping.render),
@@ -125,7 +127,7 @@ VIEWS = dict(MENU_ITEMS)
 
 # 단계들은 상단에 가로로 쭉 '나열'하고, '설정'만 드롭다운(펼치기)으로 둡니다.
 FLAT_STAGES = [
-    "홈", "신규주문", "발송대기", "배송중", "배송완료", "구매확정",
+    "홈", "점검판", "신규주문", "발송대기", "배송중", "배송완료", "구매확정",
     "취소주문", "반품주문", "교환주문", "통합주문관리", "CS메모관리",
     "긴급/문의관리", "반품완료(환불완료)", "반품 보상관리",
 ]

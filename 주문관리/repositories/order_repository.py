@@ -6,7 +6,7 @@
 # 쓰지 않고, 이 파일의 함수를 호출합니다.
 # ==========================================================
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import models
 from database import get_connection
@@ -1084,6 +1084,49 @@ def list_active_orders_for_account(market_account_id: int, work_statuses: list) 
             (market_account_id, *work_statuses),
         ).fetchall()
         return [dict(row) for row in rows]
+    finally:
+        connection.close()
+
+
+def orders_stuck_in_status(work_status: str, days: int) -> list:
+    """지금 work_status 단계에 머문 지 days일 이상 된(=그동안 안 움직인) 주문을 돌려줍니다.
+    '머문 시작 시각'은 상태이력(order_status_history)에서 '이 단계로 바뀐 가장 최근 시각'을 쓰고,
+    이력이 없으면 주문일(ordered_at)로 대체합니다.
+    돌려주는 값(경과일 긴 순): [{id, market_order_id, orderer_name, orderer_phone, ordered_at,
+      market_status, quickstar_order_no, since(YYYY-MM-DD...), days_elapsed}]
+    쓰임: 점검판 — '배송중인데 한 달째 안 움직이는 주문' 등 막힌 주문 찾기."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT o.id, o.market_order_id, o.orderer_name, o.orderer_phone, o.ordered_at,
+                   o.market_status, o.quickstar_order_no,
+                   COALESCE(h.since, o.ordered_at) AS since
+            FROM orders o
+            LEFT JOIN (
+                SELECT order_id, MAX(changed_at) AS since
+                FROM order_status_history
+                WHERE new_status = ?
+                GROUP BY order_id
+            ) h ON h.order_id = o.id
+            WHERE o.work_status = ?
+              AND substr(COALESCE(h.since, o.ordered_at), 1, 10) <= ?
+            ORDER BY since ASC
+            """,
+            (work_status, work_status, cutoff),
+        ).fetchall()
+        out = []
+        today = date.today()
+        for r in rows:
+            d = dict(r)
+            try:
+                since_date = date.fromisoformat((d.get("since") or "")[:10])
+                d["days_elapsed"] = (today - since_date).days
+            except (TypeError, ValueError):
+                d["days_elapsed"] = None
+            out.append(d)
+        return out
     finally:
         connection.close()
 
