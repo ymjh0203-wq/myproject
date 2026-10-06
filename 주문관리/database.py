@@ -8,6 +8,7 @@
 # 실제로 데이터를 넣고 빼는 코드는 repositories/ 폴더에서 담당합니다.
 # ==========================================================
 
+import re
 import sqlite3
 from datetime import datetime
 
@@ -30,6 +31,10 @@ import config
 
 def _to_pg_sql(sql: str) -> str:
     """SQLite식 SQL을 psycopg2가 이해하는 형태로 살짝 바꿔줍니다."""
+    # SQLite 전용 함수 GROUP_CONCAT(x, 구분자) → PostgreSQL STRING_AGG(x, 구분자).
+    #   (문자열을 구분자로 이어붙이는 집계함수. SQLite는 GROUP_CONCAT, PG는 STRING_AGG를 씀)
+    #   이 변환은 PG 경로에서만 일어나므로 로컬 SQLite는 GROUP_CONCAT 그대로 동작합니다.
+    sql = re.sub(r"\bGROUP_CONCAT\s*\(", "STRING_AGG(", sql, flags=re.IGNORECASE)
     # 먼저 진짜 '%' 문자를 '%%'로 감쌉니다(psycopg2는 %를 특수문자로 봅니다).
     # 그 다음 자리표시자 '?'를 psycopg2식 '%s'로 바꿉니다.
     return sql.replace("%", "%%").replace("?", "%s")
