@@ -977,6 +977,51 @@ def monthly_sales_detailed(exclude_closed: bool = True) -> list:
         connection.close()
 
 
+def daily_sales_detailed(month: str, exclude_closed: bool = True) -> list:
+    """
+    결제일(paid_at) 기준으로 '일자 × 상점(마켓 계정)'별 매출을 집계합니다.
+    month='YYYY-MM'(예: '2026-10')이면 그 달의 날짜들만 집계합니다.
+    돌려주는 값: [{"일자"(YYYY-MM-DD),"상점","건수","판매금액","수수료","정산금액","배송비"}, ...] (최신일 먼저)
+    (월별 화면에서 특정 월을 고르면 그 달의 하루하루 매출을 보여주기 위한 집계)
+    """
+    where = "o.paid_at IS NOT NULL AND o.paid_at != '' AND substr(o.paid_at, 1, 7) = ?"
+    params = [month]
+    if exclude_closed:
+        where += " AND o.work_status != '주문종료(취소·반품 등)'"
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT ymd AS 일자,
+                   COALESCE(mname, '(미지정)') AS 상점,
+                   COUNT(*) AS 건수,
+                   SUM(sales) AS 판매금액,
+                   SUM(fee) AS 수수료,
+                   SUM(sales) - SUM(fee) AS 정산금액,
+                   SUM(ship) AS 배송비
+            FROM (
+                SELECT substr(o.paid_at, 1, 10) AS ymd,
+                       ma.market_name AS mname,
+                       (SELECT COALESCE(SUM(sales_amount), 0) FROM order_items WHERE order_id = o.id) AS sales,
+                       CASE WHEN o.settlement_amount IS NOT NULL
+                            THEN (SELECT COALESCE(SUM(sales_amount), 0) FROM order_items WHERE order_id = o.id) - o.settlement_amount
+                            ELSE CAST(ROUND((SELECT COALESCE(SUM(sales_amount), 0) FROM order_items WHERE order_id = o.id) * 0.12) AS INTEGER)
+                       END AS fee,
+                       COALESCE(o.shipping_fee, 0) AS ship
+                FROM orders o
+                LEFT JOIN market_accounts ma ON ma.id = o.market_account_id
+                WHERE {where}
+            )
+            GROUP BY ymd, 상점
+            ORDER BY ymd DESC, 상점
+            """,
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
 def monthly_sales(exclude_closed: bool = True) -> list:
     """
     결제일(paid_at) 기준으로 월별 매출을 집계합니다.
