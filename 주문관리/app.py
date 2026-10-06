@@ -35,6 +35,7 @@ from ui import (
     integrated_orders,
     monthly_sales,
     new_orders,
+    order_search,
     purchase_confirmed,
     ready_to_ship,
     return_compensation,
@@ -117,6 +118,7 @@ MENU_ITEMS = [
     ("반품주문", return_orders.render),
     ("교환주문", exchange_orders.render),
     ("통합주문관리", integrated_orders.render),
+    ("주문검색", order_search.render),
     ("CS메모관리", cs_memo.render),
     ("긴급/문의관리", urgent_inquiries.render),
     ("반품완료(환불완료)", return_completed.render),
@@ -136,7 +138,7 @@ VIEWS = dict(MENU_ITEMS)
 # 단계들은 상단에 가로로 쭉 '나열'하고, '설정'만 드롭다운(펼치기)으로 둡니다.
 FLAT_STAGES = [
     "홈", "점검판", "신규주문", "발송대기", "배송중", "배송완료", "구매확정",
-    "취소주문", "반품주문", "교환주문", "통합주문관리", "CS메모관리",
+    "취소주문", "반품주문", "교환주문", "통합주문관리", "주문검색", "CS메모관리",
     "긴급/문의관리", "반품완료(환불완료)", "반품 보상관리",
 ]
 SETTINGS_ITEMS = ["월별 매출", "매출정리", "타오바오 링크", "쇼핑몰 계정", "일반 설정", "엑셀 양식", "문자 발송 이력"]

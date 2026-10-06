@@ -704,6 +704,49 @@ def list_orders_by_work_status(work_status: str) -> list:
         connection.close()
 
 
+def search_orders(keyword: str, limit: int = 300) -> list:
+    """전역 주문 검색: work_status(단계)와 상관없이 전체 주문에서 키워드로 찾습니다.
+    검색 대상 — 주문번호/구매자명/구매자전화/수령자명/수령자전화/통관부호/
+    송장(입력·마켓)/배대지(GR·운송장)/상품명. (부분일치, 대소문자 무시)
+    각 주문에 items·shipping·market_account_name을 붙여 돌려줍니다(최신 주문일 순, 최대 limit건).
+    쓰임: '전역 주문 검색' 화면 — 어느 단계에 있든 한 번에 찾기."""
+    kw = (keyword or "").strip()
+    if not kw:
+        return []
+    like = f"%{kw.lower()}%"
+    connection = get_connection()
+    try:
+        order_rows = connection.execute(
+            """
+            SELECT orders.*, market_accounts.market_name AS market_account_name
+            FROM orders
+            LEFT JOIN market_accounts ON market_accounts.id = orders.market_account_id
+            LEFT JOIN shipping_information s ON s.order_id = orders.id
+            WHERE LOWER(orders.market_order_id) LIKE ?
+               OR LOWER(COALESCE(orders.orderer_name, '')) LIKE ?
+               OR LOWER(COALESCE(orders.orderer_phone, '')) LIKE ?
+               OR LOWER(COALESCE(orders.invoice_number, '')) LIKE ?
+               OR LOWER(COALESCE(orders.market_invoice_number, '')) LIKE ?
+               OR LOWER(COALESCE(orders.quickstar_order_no, '')) LIKE ?
+               OR LOWER(COALESCE(orders.quickstar_invoice, '')) LIKE ?
+               OR LOWER(COALESCE(s.receiver_name, '')) LIKE ?
+               OR LOWER(COALESCE(s.receiver_phone_raw, '')) LIKE ?
+               OR LOWER(COALESCE(s.pccc, '')) LIKE ?
+               OR orders.id IN (
+                    SELECT order_id FROM order_items WHERE LOWER(COALESCE(product_name, '')) LIKE ?
+               )
+            ORDER BY orders.ordered_at DESC
+            LIMIT ?
+            """,
+            (like, like, like, like, like, like, like, like, like, like, like, limit),
+        ).fetchall()
+
+        orders = [dict(order_row) for order_row in order_rows]
+        return _attach_items_and_shipping(connection, orders)
+    finally:
+        connection.close()
+
+
 def list_orders_with_cs_memo() -> list:
     """
     CS메모(고객 특이사항)가 적혀 있는 주문들을 최신순으로 돌려줍니다.
