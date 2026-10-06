@@ -341,7 +341,44 @@ def render_general() -> None:
 
     st.divider()
     st.subheader("데이터베이스")
-    st.write(f"파일 경로: {config.DB_PATH}")
+    if config.use_postgres():
+        st.write("연결: **클라우드(Supabase/PostgreSQL)** — 여러 PC 공용")
+    else:
+        st.write(f"연결: 로컬 SQLite 파일 — {config.DB_PATH}")
+
+    _render_backup_settings()
+
+
+def _render_backup_settings() -> None:
+    """자동/수동 DB 백업 UI. 클라우드 전체를 로컬 SQLite 파일로 저장합니다."""
+    from services import backup_service
+
+    st.subheader("데이터 백업")
+    last = backup_service.last_backup_date()
+    st.caption(
+        "하루 한 번(앱 첫 실행 시) 전체 데이터를 로컬 SQLite 파일로 자동 백업합니다. "
+        f"저장 위치: `{backup_service.backups_dir()}` · 최근 14개 보관. "
+        f"마지막 백업일: **{last or '아직 없음'}**"
+    )
+    if st.button("💾 지금 백업하기", key="backup_now", type="primary",
+                 help="클라우드 전체를 지금 즉시 로컬 파일로 저장합니다(수초 소요)."):
+        with st.spinner("백업 중… (전체 데이터를 로컬로 복사합니다)"):
+            try:
+                path = backup_service.run_backup_now()
+                st.success(f"✅ 백업 완료: {path}")
+            except Exception as error:  # noqa: BLE001
+                st.error(f"백업 실패: {error}")
+
+    items = backup_service.list_backups()
+    if items:
+        import pandas as pd
+
+        df = pd.DataFrame([{
+            "파일": it["name"],
+            "크기(MB)": round(it["size"] / 1024 / 1024, 1),
+            "만든 시각": it["mtime"].strftime("%Y-%m-%d %H:%M"),
+        } for it in items])
+        st.dataframe(df, width="stretch", hide_index=True)
 
 
 def render_shop_accounts() -> None:

@@ -28,3 +28,6 @@ venv/
 # OS 파일
 .DS_Store
 Thumbs.db
+
+# 로컬 DB 백업(자동 생성, 커밋 제외)
+backups/

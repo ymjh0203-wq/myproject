@@ -71,6 +71,14 @@ if not st.session_state.get("_auto_collected_once"):
         # 자동 수집이 실패해도 앱은 정상적으로 뜨게 합니다(수동 '수집하기'로 재시도 가능).
         pass
 
+    # 하루 1회, 클라우드 전체를 로컬 SQLite로 백그라운드 백업(오늘 이미 했으면 건너뜀).
+    try:
+        from services import backup_service
+
+        backup_service.run_daily_backup_async()
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------
 # 화면(메뉴)을 옮겨다녀도 각 화면의 '입력값'이 초기화되지 않게 유지합니다.
 # Streamlit은 '이번 실행에서 그려지지 않은 위젯'(예: 지금 안 보는 다른 단계 화면의
