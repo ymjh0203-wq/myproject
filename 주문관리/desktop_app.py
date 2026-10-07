@@ -85,7 +85,37 @@ def main() -> None:
             time.sleep(0.5)
 
     icon_path = os.path.join(BASE_DIR, "assets", "app_icon.ico")
-    webview.create_window("주문관리", APP_URL, width=1600, height=950)
+
+    # ★pywebview는 '앱처럼' 보이게 하려고 텍스트 선택(드래그·복사)을 기본으로 끕니다.
+    #   주문번호·상품명 등을 끌어서 복사해야 하므로 text_select=True로 켭니다.
+    #   (옛 버전은 이 인자가 없어 TypeError → 그땐 아래 CSS 주입으로 보완)
+    try:
+        window = webview.create_window("주문관리", APP_URL, width=1600, height=950, text_select=True)
+    except TypeError:
+        window = webview.create_window("주문관리", APP_URL, width=1600, height=950)
+
+    # 보강: 페이지가 로드될 때마다 '텍스트 선택 허용' CSS를 강제로 넣습니다.
+    _SELECT_CSS = ("*{-webkit-user-select:text !important;"
+                   "-ms-user-select:text !important;user-select:text !important;}")
+
+    def _enable_text_select():
+        try:
+            window.load_css(_SELECT_CSS)
+        except Exception:
+            try:
+                window.evaluate_js(
+                    "(function(){var s=document.createElement('style');"
+                    "s.innerHTML=" + repr(_SELECT_CSS) + ";"
+                    "document.head.appendChild(s);})();"
+                )
+            except Exception:
+                pass
+
+    try:
+        window.events.loaded += _enable_text_select
+    except Exception:
+        pass
+
     try:
         # pywebview 버전에 따라 start(icon=...) 지원이 달라, 지원하면 쓰고 아니면 그냥 엽니다.
         if os.path.exists(icon_path):
