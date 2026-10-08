@@ -22,7 +22,8 @@ import urllib.request
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PORT = 8501
 HEALTH_URL = f"http://localhost:{PORT}/_stcore/health"
-APP_URL = f"http://localhost:{PORT}"
+# ?client=desktop : 앱이 '데스크톱 창에서 열렸다'를 알도록 표시(브라우저와 UI를 다르게 하려고).
+APP_URL = f"http://localhost:{PORT}/?client=desktop"
 
 
 def _server_up() -> bool:

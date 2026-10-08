@@ -948,6 +948,15 @@ def render_template_excel_download(excel_rows: list, key: str, filename: str) ->
         )
 
 
+def is_desktop_app() -> bool:
+    """데스크톱 앱(pywebview 창)에서 열렸으면 True. (app.py가 ?client=desktop을 보고 세션에 기록)
+    브라우저 다운로드가 막히는 데스크톱 앱에서는 '저장하고 열기'만 보여주는 등 UI 분기에 씁니다."""
+    try:
+        return bool(st.session_state.get("is_desktop_app"))
+    except Exception:
+        return False
+
+
 def save_bytes_to_downloads(data: bytes, filename: str, open_after: bool = False) -> str:
     """바이트를 '다운로드' 폴더에 저장하고, 저장 경로를 돌려줍니다(실패 시 "").
     같은 이름이 있으면 시각을 붙여 덮어쓰지 않습니다. open_after=True면 저장 후 바로 엽니다.
@@ -1008,29 +1017,37 @@ def excel_export_dialog(all_orders: list, selected_orders: list, key: str, revea
     data = build_excel_bytes(rows) if pick == 0 else build_excel_from_template(rows, templates[pick - 1]["columns"])
 
     st.caption(f"생성 대상 **{len(orders)}건** · 양식 **{names[pick]}**")
-    col_save, col_dl, col_close = st.columns(3)
-    with col_save:
-        # ★데스크톱 앱(pywebview)은 브라우저식 '다운로드'가 막혀 있어 아래 '다운로드'가
-        #   안 먹습니다. 서버가 같은 PC에서 도니, 파일을 다운로드 폴더에 직접 저장하고
-        #   바로 엽니다. (브라우저 모드에서도 동일하게 동작)
-        if st.button("💾 저장하고 열기", width="stretch", type="primary",
-                     key=f"{key}_exp_save", disabled=not orders,
-                     help="다운로드 폴더에 엑셀을 저장하고 바로 엽니다. (데스크톱 앱에서 권장)"):
-            saved = save_bytes_to_downloads(data, f"{key}_주문.xlsx", open_after=True)
-            if saved:
-                st.success(f"저장했습니다: {saved}")
-            else:
-                st.error("저장에 실패했습니다. 아래 '다운로드'를 눌러보세요.")
-    with col_dl:
-        st.download_button(
-            "📥 다운로드", data=data, file_name=f"{key}_주문.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch", key=f"{key}_exp_dl", disabled=not orders,
-            help="브라우저에서 열었을 때 쓰는 일반 다운로드입니다.",
-        )
-    with col_close:
-        if st.button("닫기", width="stretch", key=f"{key}_exp_close"):
-            st.rerun()
+
+    def _save_and_open():
+        saved = save_bytes_to_downloads(data, f"{key}_주문.xlsx", open_after=True)
+        if saved:
+            st.success(f"저장했습니다: {saved}")
+        else:
+            st.error("저장에 실패했습니다.")
+
+    if is_desktop_app():
+        # 데스크톱 앱: 브라우저식 다운로드가 막혀 있어 '저장하고 열기'만 보여줍니다.
+        col_save, col_close = st.columns(2)
+        with col_save:
+            if st.button("💾 엑셀 파일 저장하고 열기", width="stretch", type="primary",
+                         key=f"{key}_exp_save", disabled=not orders,
+                         help="다운로드 폴더에 엑셀을 저장하고 바로 엽니다."):
+                _save_and_open()
+        with col_close:
+            if st.button("닫기", width="stretch", key=f"{key}_exp_close"):
+                st.rerun()
+    else:
+        # 브라우저: 일반 다운로드.
+        col_dl, col_close = st.columns(2)
+        with col_dl:
+            st.download_button(
+                "📥 엑셀 파일 생성", data=data, file_name=f"{key}_주문.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary", key=f"{key}_exp_dl", disabled=not orders,
+            )
+        with col_close:
+            if st.button("닫기", width="stretch", key=f"{key}_exp_close"):
+                st.rerun()
 
 
 @st.dialog("표시 항목 설정", width="large")

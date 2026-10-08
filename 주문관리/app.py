@@ -156,6 +156,11 @@ _view_param = st.query_params.get("view")
 if _view_param and _view_param in VIEWS:
     st.session_state["current_view"] = _view_param
 
+# 데스크톱 앱(pywebview)은 URL에 ?client=desktop 로 열립니다. 한 번 읽어 세션에 기억해두고,
+# 이후 화면들이 '데스크톱 전용 UI'(예: 엑셀은 다운로드 대신 '저장하고 열기'만)로 분기합니다.
+if st.query_params.get("client") == "desktop":
+    st.session_state["is_desktop_app"] = True
+
 if st.session_state.get("current_view") not in VIEWS:
     st.session_state["current_view"] = "홈"
 
