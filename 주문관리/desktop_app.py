@@ -51,12 +51,15 @@ def _start_server():
     import subprocess
 
     creationflags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+    env = dict(os.environ)
+    env["ORDER_MGMT_DESKTOP"] = "1"  # 이 서버는 '데스크톱 앱용'임을 표시(UI 분기용)
     return subprocess.Popen(
         [_python_exe(), "-m", "streamlit", "run", "app.py",
          "--server.headless=true", f"--server.port={PORT}",
          "--browser.gatherUsageStats=false"],
         cwd=BASE_DIR,
         creationflags=creationflags,
+        env=env,
     )
 
 

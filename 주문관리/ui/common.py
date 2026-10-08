@@ -949,8 +949,14 @@ def render_template_excel_download(excel_rows: list, key: str, filename: str) ->
 
 
 def is_desktop_app() -> bool:
-    """데스크톱 앱(pywebview 창)에서 열렸으면 True. (app.py가 ?client=desktop을 보고 세션에 기록)
+    """데스크톱 앱(pywebview 창)에서 열렸으면 True. 두 가지로 판단(둘 중 하나라도 맞으면 데스크톱):
+      ① 서버가 데스크톱 실행기(desktop_app.py)로 떴을 때 설정되는 환경변수 ORDER_MGMT_DESKTOP=1
+      ② 창이 ?client=desktop URL로 열려 app.py가 세션에 기록한 플래그
     브라우저 다운로드가 막히는 데스크톱 앱에서는 '저장하고 열기'만 보여주는 등 UI 분기에 씁니다."""
+    import os
+
+    if os.environ.get("ORDER_MGMT_DESKTOP") == "1":
+        return True
     try:
         return bool(st.session_state.get("is_desktop_app"))
     except Exception:
