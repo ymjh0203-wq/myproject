@@ -948,6 +948,33 @@ def render_template_excel_download(excel_rows: list, key: str, filename: str) ->
         )
 
 
+def save_bytes_to_downloads(data: bytes, filename: str, open_after: bool = False) -> str:
+    """바이트를 '다운로드' 폴더에 저장하고, 저장 경로를 돌려줍니다(실패 시 "").
+    같은 이름이 있으면 시각을 붙여 덮어쓰지 않습니다. open_after=True면 저장 후 바로 엽니다.
+    ★서버가 사용자 PC(localhost)에서 돌기 때문에, 여기서 쓴 파일은 사용자 PC에 그대로 생깁니다.
+      데스크톱 앱(pywebview)에서 브라우저 다운로드가 막힐 때 쓰는 확실한 저장 경로입니다."""
+    import os
+    from datetime import datetime
+
+    try:
+        downloads = os.path.join(os.path.expanduser("~"), "Downloads")
+        target_dir = downloads if os.path.isdir(downloads) else os.path.expanduser("~")
+        base, ext = os.path.splitext(filename)
+        path = os.path.join(target_dir, filename)
+        if os.path.exists(path):
+            path = os.path.join(target_dir, f"{base}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}")
+        with open(path, "wb") as f:
+            f.write(data)
+        if open_after:
+            try:
+                os.startfile(path)  # Windows: 연결된 프로그램(엑셀)으로 열기
+            except Exception:  # noqa: BLE001 (열기 실패해도 저장은 성공)
+                pass
+        return path
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 @st.dialog("엑셀 파일 생성", width="large")
 def excel_export_dialog(all_orders: list, selected_orders: list, key: str, reveal: bool = True) -> None:
     """
@@ -981,12 +1008,25 @@ def excel_export_dialog(all_orders: list, selected_orders: list, key: str, revea
     data = build_excel_bytes(rows) if pick == 0 else build_excel_from_template(rows, templates[pick - 1]["columns"])
 
     st.caption(f"생성 대상 **{len(orders)}건** · 양식 **{names[pick]}**")
-    col_dl, col_close = st.columns(2)
+    col_save, col_dl, col_close = st.columns(3)
+    with col_save:
+        # ★데스크톱 앱(pywebview)은 브라우저식 '다운로드'가 막혀 있어 아래 '다운로드'가
+        #   안 먹습니다. 서버가 같은 PC에서 도니, 파일을 다운로드 폴더에 직접 저장하고
+        #   바로 엽니다. (브라우저 모드에서도 동일하게 동작)
+        if st.button("💾 저장하고 열기", width="stretch", type="primary",
+                     key=f"{key}_exp_save", disabled=not orders,
+                     help="다운로드 폴더에 엑셀을 저장하고 바로 엽니다. (데스크톱 앱에서 권장)"):
+            saved = save_bytes_to_downloads(data, f"{key}_주문.xlsx", open_after=True)
+            if saved:
+                st.success(f"저장했습니다: {saved}")
+            else:
+                st.error("저장에 실패했습니다. 아래 '다운로드'를 눌러보세요.")
     with col_dl:
         st.download_button(
-            "📥 엑셀 파일 생성", data=data, file_name=f"{key}_주문.xlsx",
+            "📥 다운로드", data=data, file_name=f"{key}_주문.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch", type="primary", key=f"{key}_exp_dl", disabled=not orders,
+            width="stretch", key=f"{key}_exp_dl", disabled=not orders,
+            help="브라우저에서 열었을 때 쓰는 일반 다운로드입니다.",
         )
     with col_close:
         if st.button("닫기", width="stretch", key=f"{key}_exp_close"):
