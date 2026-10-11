@@ -185,6 +185,17 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         if v is not None and str(v).strip():
             data_rows.append(r)
 
+    # ★중복 주문번호 감지: 같은 주문번호(없으면 GR)가 시트에 2건 이상이면 그 행들은
+    #   채우지 않고 '비고'에 사유만 적습니다(어느 게 진짜인지 사람이 판단하도록).
+    from collections import Counter
+    dup_counts = Counter()
+    for r in data_rows:
+        k = str(ws.cell(r, col_order).value or "").strip() if col_order else ""
+        if not k and col_gr:
+            k = str(ws.cell(r, col_gr).value or "").strip()
+        if k:
+            dup_counts[k] += 1
+
     # ★수취인 대조용: 앱 DB에서 주문번호 → 수취인명·전화를 미리 한 번에 불러옵니다.
     recv_map = {}
     if col_order:
@@ -197,7 +208,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
     gr_cache = {}
     stats = {"rows": 0, "filled_price": 0, "filled_ship": 0,
              "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0,
-             "mismatch": 0}
+             "mismatch": 0, "dup": 0}
     notes = []
 
     for idx, r in enumerate(data_rows):
@@ -219,6 +230,23 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         sheet_gr = str(ws.cell(r, col_gr).value or "").strip() if col_gr else ""
         label = moid or sheet_gr  # 비고 목록에 보여줄 식별자
         _ref_col = col_order or col_gr or col_cost  # 폰트 복사용 기준열(항상 존재)
+
+        # ★중복 주문번호 행: 채우지 않고 사유만 적고 넘어갑니다.
+        _dupkey = moid or sheet_gr
+        if _dupkey and dup_counts.get(_dupkey, 0) >= 2:
+            stats["dup"] += 1
+            _dnote = f"중복 주문번호(시트에 {dup_counts[_dupkey]}건) — 건너뜀"
+            _dc = ws.cell(r, col_note)
+            _dc.value = _dnote
+            _dc.font = copy.copy(ws.cell(r, _ref_col).font)
+            notes.append((label, _dnote))
+            if progress:
+                try:
+                    progress(idx + 1, len(data_rows))
+                except Exception:  # noqa: BLE001
+                    pass
+            continue
+
         note = ""
         gr = sheet_gr or (gr_map.get(moid) or "").strip()
         if not gr:
