@@ -12,7 +12,8 @@
 # ==========================================================
 
 from integrations import quickstar_client
-from repositories import cost_repository
+from repositories import cost_repository, order_repository
+from services import ledger_match
 
 
 def _to_float(value):
@@ -56,9 +57,16 @@ def autofill_costs(orders: list, progress=None) -> dict:
     ※ 이미 값이 있고 이번에 못 가져온 항목은 기존 값을 지우지 않습니다."""
     order_ids = [o["order_id"] for o in orders]
     existing = cost_repository.get_map(order_ids)
+    # ★수취인 대조용: 주문번호 → 수취인명·전화 (배대지 수취인과 맞는지 확인).
+    try:
+        recv_map = order_repository.get_receiver_by_market_order_ids(
+            [o.get("market_order_id") for o in orders])
+    except Exception:  # noqa: BLE001
+        recv_map = {}
 
-    scanned = with_gr = filled_price = filled_ship = no_gr = errors = 0
+    scanned = with_gr = filled_price = filled_ship = no_gr = errors = mismatch = 0
     error_samples = []
+    mismatch_samples = []
 
     for i, o in enumerate(orders):
         scanned += 1
@@ -76,6 +84,18 @@ def autofill_costs(orders: list, progress=None) -> dict:
             if len(error_samples) < 6:
                 error_samples.append(f"{o.get('market_order_id') or gr}: {e}")
             unit_cny, ship = None, None
+
+        # ★수취인 대조: 배대지 수취인명+전화가 이 주문과 둘 다 맞아야 채움.
+        if unit_cny is not None or ship is not None:
+            app_name, app_phone = ledger_match.receiver_of_application(data)
+            _rec = recv_map.get(str(o.get("market_order_id"))) or {}
+            matched, mreason = ledger_match.verify(
+                app_name, app_phone, _rec.get("name") or "", _rec.get("phones") or [])
+            if not matched:
+                mismatch += 1
+                if len(mismatch_samples) < 6:
+                    mismatch_samples.append(f"{o.get('market_order_id') or gr}: {mreason}")
+                unit_cny, ship = None, None  # 불일치 → 안 채움
 
         cur = existing.get(o["order_id"], {})
         new_price = unit_cny if unit_cny is not None else cur.get("unit_price_cny")
@@ -104,4 +124,6 @@ def autofill_costs(orders: list, progress=None) -> dict:
         "filled_ship": filled_ship,
         "errors": errors,
         "error_samples": error_samples,
+        "mismatch": mismatch,
+        "mismatch_samples": mismatch_samples,
     }

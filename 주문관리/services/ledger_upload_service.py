@@ -17,6 +17,7 @@ import io
 
 from integrations import quickstar_client
 from repositories import order_repository
+from services import ledger_match
 
 
 # 헤더 이름 후보(엑셀마다 약간 달라도 잡히게 여러 개 허용)
@@ -27,6 +28,9 @@ _H_SHIP = ["배송비용"]
 _H_DATE = ["주문시간", "주문일시", "주문일", "결제 일시", "결제일시"]  # 기간 필터 기준 날짜
 # ★GR(그룹번호=퀵스타 신청번호) 열이 시트에 있으면 그걸 바로 씁니다(DB 조회 불필요).
 _H_GR = ["퀵스타 신청번호", "그룹번호", "GR신청번호", "GR 신청번호", "GR", "신청번호", "신청번호*"]
+# 수취인 대조용(앱 DB에 없을 때 시트 값으로 대조): 이름·전화 칸.
+_H_NAME = ["고객성함", "수취인", "수취인명", "수령자", "받는분", "고객명", "성함"]
+_H_PHONE = ["연락처", "전화번호", "전화", "휴대폰", "핸드폰"]
 _NOTE_HEADER = "비고(자동확인)"
 
 
@@ -108,8 +112,10 @@ def _find_headers(ws):
     col_ship = _pick(_H_SHIP)
     col_date = _pick(_H_DATE)
     col_gr = _pick(_H_GR)
+    col_name = _pick(_H_NAME)
+    col_phone = _pick(_H_PHONE)
     col_note = header.get(_NOTE_HEADER) or (last_col + 1)  # 없으면 맨 끝에 새로 만듦
-    return col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_note
+    return col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_name, col_phone, col_note
 
 
 def _pick_sheet(wb):
@@ -140,7 +146,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         return {"ok": False, "error": f"엑셀을 열 수 없습니다: {e}"}
 
     ws = _pick_sheet(wb)
-    col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_note = _find_headers(ws)
+    col_order, col_qty, col_cost, col_ship, col_date, col_gr, col_name, col_phone, col_note = _find_headers(ws)
     _use_range = (date_from is not None) or (date_to is not None)
     if _use_range and not col_date:
         return {"ok": False,
@@ -179,9 +185,19 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         if v is not None and str(v).strip():
             data_rows.append(r)
 
+    # ★수취인 대조용: 앱 DB에서 주문번호 → 수취인명·전화를 미리 한 번에 불러옵니다.
+    recv_map = {}
+    if col_order:
+        _moids = [str(ws.cell(r, col_order).value or "").strip() for r in data_rows]
+        try:
+            recv_map = order_repository.get_receiver_by_market_order_ids(_moids)
+        except Exception:  # noqa: BLE001 (대조 못해도 아래에서 시트값으로 대조)
+            recv_map = {}
+
     gr_cache = {}
     stats = {"rows": 0, "filled_price": 0, "filled_ship": 0,
-             "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0}
+             "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0,
+             "mismatch": 0}
     notes = []
 
     for idx, r in enumerate(data_rows):
@@ -221,34 +237,54 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                         data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
                         gr_cache[gr] = data
                     unit, ship, tcnt, kinds = _extract_costs(data, qty)
-                    # 채운 셀 폰트를 그 행의 기존 셀과 동일하게 맞춥니다(맑은 고딕 12 등).
-                    _row_font = copy.copy(ws.cell(r, _ref_col).font)
-                    if unit is not None:
-                        _cc = ws.cell(r, col_cost)
-                        _cc.value = unit
-                        _cc.font = copy.copy(_row_font)
-                        _cc.number_format = "0.00"   # 단가(CNY) 소수 2자리
-                        stats["filled_price"] += 1
-                    if ship is not None:
-                        _sc = ws.cell(r, col_ship)
-                        _sc.value = ship
-                        _sc.font = copy.copy(_row_font)
-                        _sc.number_format = "#,##0"  # 배송비 천단위
-                        stats["filled_ship"] += 1
-                    reasons = []
-                    if unit is None and ship is None:
-                        reasons.append("배대지에 단가·배송비 없음")
+
+                    # ★수취인 대조: 배대지 신청서의 수취인명+전화가 이 주문의 수취인과
+                    #   둘 다 맞아야 '인증'. 안 맞으면 단가·배송비를 넣지 않고 사유만 남깁니다.
+                    #   (GR이 엉뚱한 사람 것으로 매칭돼도 남의 값이 섞이지 않게)
+                    app_name, app_phone = ledger_match.receiver_of_application(data)
+                    _dbrec = recv_map.get(moid) if moid else None
+                    if _dbrec and (_dbrec.get("name") or _dbrec.get("phones")):
+                        ord_name = _dbrec.get("name") or ""
+                        ord_phones = _dbrec.get("phones") or []
                     else:
-                        if unit is None:
-                            reasons.append("배대지 단가 없음")
-                        if ship is None:
-                            reasons.append("출고 전이라 배송비 없음")
-                    if kinds > 1:
-                        reasons.append(f"의심:GR에 상품 {kinds}종(단가 합산)")
-                        stats["suspect"] += 1
-                    if tcnt and qty and tcnt != qty:
-                        reasons.append(f"의심:수량불일치(배대지{tcnt}/엑셀{qty})")
-                        stats["suspect"] += 1
+                        # 앱 DB에 없으면 시트의 고객성함·연락처로 대조(차선).
+                        ord_name = str(ws.cell(r, col_name).value or "").strip() if col_name else ""
+                        ord_phones = [str(ws.cell(r, col_phone).value or "")] if col_phone else []
+                    matched, mreason = ledger_match.verify(app_name, app_phone, ord_name, ord_phones)
+
+                    reasons = []
+                    if not matched:
+                        # 불일치 → 값 안 넣음.
+                        stats["mismatch"] += 1
+                        reasons.append(mreason or "수취인 대조 실패(안 채움)")
+                    else:
+                        # 일치(인증) → 단가·배송비 채우기. 셀 폰트는 그 행과 동일하게.
+                        _row_font = copy.copy(ws.cell(r, _ref_col).font)
+                        if unit is not None:
+                            _cc = ws.cell(r, col_cost)
+                            _cc.value = unit
+                            _cc.font = copy.copy(_row_font)
+                            _cc.number_format = "0.00"   # 단가(CNY) 소수 2자리
+                            stats["filled_price"] += 1
+                        if ship is not None:
+                            _sc = ws.cell(r, col_ship)
+                            _sc.value = ship
+                            _sc.font = copy.copy(_row_font)
+                            _sc.number_format = "#,##0"  # 배송비 천단위
+                            stats["filled_ship"] += 1
+                        if unit is None and ship is None:
+                            reasons.append("배대지에 단가·배송비 없음")
+                        else:
+                            if unit is None:
+                                reasons.append("배대지 단가 없음")
+                            if ship is None:
+                                reasons.append("출고 전이라 배송비 없음")
+                        if kinds > 1:
+                            reasons.append(f"의심:GR에 상품 {kinds}종(단가 합산)")
+                            stats["suspect"] += 1
+                        if tcnt and qty and tcnt != qty:
+                            reasons.append(f"의심:수량불일치(배대지{tcnt}/엑셀{qty})")
+                            stats["suspect"] += 1
                     note = " · ".join(reasons)
                 except Exception as e:  # noqa: BLE001
                     note = f"배대지 조회 오류: {e}"

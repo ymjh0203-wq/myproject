@@ -68,8 +68,9 @@ def _render_upload_fill() -> None:
         st.caption(
             "내가 쓰는 매출 엑셀(‘마켓 주문번호’·‘단순매입가’·‘배송비용’ 칸이 있는 시트)을 올리면, "
             "각 행의 주문번호로 배대지 GR을 조회해 **단순매입가(단가 CNY)·배송비용(원)**을 채워 드립니다. "
-            "매입가·구매비용·순매출·마진율은 시트 수식이 자동 계산합니다. 못 채운/의심 건은 맨 끝 "
-            "**‘비고(자동확인)’** 칸에 사유를 적습니다. (값은 그대로 두고 두 칸만 채워 안전)"
+            "★**배대지 수취인명+전화가 그 주문의 수취인과 둘 다 맞을 때만(인증)** 채웁니다 — 안 맞으면 "
+            "값을 넣지 않고 **‘비고(자동확인)’** 칸에 '수취인 불일치'로 적습니다. "
+            "매입가·구매비용·순매출·마진율은 시트 수식이 자동 계산합니다. (값은 그대로 두고 두 칸만 채워 안전)"
         )
         up = st.file_uploader("매출 엑셀 파일(.xlsx)", type=["xlsx"], key="ledger_upload_file")
 
@@ -102,8 +103,8 @@ def _render_upload_fill() -> None:
                 _rng = f" · 기간밖 건너뜀 {s.get('skipped', 0)}건" if _use_range else ""
                 st.success(
                     f"[{res['sheet']}] 시트 — 원가 {s['filled_price']}건 · 배송비 {s['filled_ship']}건 채움 "
-                    f"(처리 {s['rows']}행{_rng}). GR없음 {s['no_gr']} · 앱에없음 {s['not_in_db']} · "
-                    f"의심 {s['suspect']} · 오류 {s['err']}"
+                    f"(처리 {s['rows']}행{_rng}). 수취인 불일치로 건너뜀 {s.get('mismatch', 0)} · "
+                    f"GR없음 {s['no_gr']} · 앱에없음 {s['not_in_db']} · 의심 {s['suspect']} · 오류 {s['err']}"
                 )
                 # 채운 파일 세션에 보관 → 아래 다운로드 버튼(새로고침돼도 유지)
                 st.session_state["ledger_upload_result"] = res
@@ -191,8 +192,11 @@ def render() -> None:
             st.success(
                 f"자동 채움 완료 — GR 있는 {rep['with_gr']}건 중 "
                 f"원가 {rep['filled_price']}건 · 배송비 {rep['filled_ship']}건 채움. "
-                f"(GR 없음 {rep['no_gr']}건, 오류 {rep['errors']}건)"
+                f"(수취인 불일치로 건너뜀 {rep.get('mismatch', 0)}건, "
+                f"GR 없음 {rep['no_gr']}건, 오류 {rep['errors']}건)"
             )
+            if rep.get("mismatch_samples"):
+                st.caption("수취인 불일치(안 채움): " + " / ".join(rep["mismatch_samples"]))
             if rep["error_samples"]:
                 st.caption("일부 오류: " + " / ".join(rep["error_samples"]))
             st.rerun()

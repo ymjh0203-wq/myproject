@@ -704,6 +704,42 @@ def list_orders_by_work_status(work_status: str) -> list:
         connection.close()
 
 
+def get_receiver_by_market_order_ids(market_order_ids: list) -> dict:
+    """매출정리 수취인 대조용: 마켓주문번호 → {name(수취인명), phones[통관전화·수취인전화]}.
+    배대지 신청서의 수취인명/전화와 맞는지 확인할 때 '주문쪽 수취인' 값으로 씁니다."""
+    ids = [str(x) for x in dict.fromkeys(market_order_ids) if x]
+    if not ids:
+        return {}
+    connection = get_connection()
+    try:
+        placeholders = ", ".join(["?"] * len(ids))
+        rows = connection.execute(
+            f"""
+            SELECT o.market_order_id,
+                   s.receiver_name AS name,
+                   s.customs_phone AS phone1,
+                   s.receiver_phone_raw AS phone2,
+                   o.orderer_name AS orderer_name,
+                   o.orderer_phone AS orderer_phone
+            FROM orders o
+            LEFT JOIN shipping_information s ON s.order_id = o.id
+            WHERE o.market_order_id IN ({placeholders})
+            """,
+            tuple(ids),
+        ).fetchall()
+        out = {}
+        for r in rows:
+            moid = str(r["market_order_id"])
+            name = (r["name"] or r["orderer_name"] or "").strip()
+            phones = [p for p in (r["phone1"], r["phone2"], r["orderer_phone"]) if p]
+            # 같은 주문번호가 여럿이면, 수취인명이 있는 첫 건을 우선 채택.
+            if moid not in out or (name and not out[moid].get("name")):
+                out[moid] = {"name": name, "phones": phones}
+        return out
+    finally:
+        connection.close()
+
+
 def search_orders(keyword: str, limit: int = 300) -> list:
     """전역 주문 검색: work_status(단계)와 상관없이 전체 주문에서 키워드로 찾습니다.
     검색 대상 — 주문번호/구매자명/구매자전화/수령자명/수령자전화/통관부호/
