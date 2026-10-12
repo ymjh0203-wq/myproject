@@ -111,11 +111,9 @@ def _render_upload_fill() -> None:
                 st.session_state["ledger_upload_result"] = res
         _res = st.session_state.get("ledger_upload_result")
         if _res and _res.get("ok"):
-            st.download_button(
-                "📥 채워진 엑셀 내려받기", data=_res["out_bytes"],
-                file_name="매출_원가배송비_채움.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch", key="ledger_upload_dl",
+            common.excel_download_or_save(
+                "📥 채워진 엑셀 내려받기", _res["out_bytes"],
+                "매출_원가배송비_채움.xlsx", key="ledger_upload_dl",
             )
             if _res.get("notes"):
                 with st.expander(f"⚠️ 못 채운/의심 건 {len(_res['notes'])}개 보기", expanded=False):
@@ -275,11 +273,9 @@ def render() -> None:
     # ---- 엑셀 다운로드: 사장님 '매출' 시트 양식 그대로 ----
     xlsx_bytes = _build_maechul_xlsx(orders, edited, rate, account_name)
     with col_dl:
-        st.download_button(
-            "📥 매출정리 엑셀 다운로드 (사장님 매출 양식)", data=xlsx_bytes,
-            file_name=f"매출_{account_name}_{period_from}~{period_to}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch", key="ledger_dl",
+        common.excel_download_or_save(
+            "📥 매출정리 엑셀 다운로드 (사장님 매출 양식)", xlsx_bytes,
+            f"매출_{account_name}_{period_from}~{period_to}.xlsx", key="ledger_dl",
         )
 
 

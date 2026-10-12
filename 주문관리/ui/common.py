@@ -938,13 +938,10 @@ def render_template_excel_download(excel_rows: list, key: str, filename: str) ->
     template = templates[pick]
     with col_dl:
         st.write("")
-        st.download_button(
+        excel_download_or_save(
             "📋 양식대로 다운로드",
-            data=build_excel_from_template(excel_rows, template["columns"]),
-            file_name=filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
-            key=f"{key}_tpl_dl",
+            build_excel_from_template(excel_rows, template["columns"]),
+            filename, key=f"{key}_tpl_dl",
         )
 
 
@@ -988,6 +985,31 @@ def save_bytes_to_downloads(data: bytes, filename: str, open_after: bool = False
         return path
     except Exception:  # noqa: BLE001
         return ""
+
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def excel_download_or_save(label: str, data: bytes, filename: str, key: str,
+                           disabled: bool = False, help: str = None) -> None:
+    """엑셀 내려받기 버튼 — 환경에 맞게 하나만 보여줍니다.
+      · 데스크톱 앱: 브라우저 다운로드가 막혀 있어 '💾 저장하고 열기'(다운로드 폴더에 저장 후 열기).
+      · 브라우저: 일반 st.download_button.
+    xlsx 전용. 여러 화면(매출정리 등)에서 재사용합니다."""
+    if is_desktop_app():
+        if st.button(f"💾 {label} (저장하고 열기)", key=f"{key}_saveopen",
+                     width="stretch", type="primary", disabled=disabled,
+                     help=help or "다운로드 폴더에 저장하고 바로 엽니다."):
+            saved = save_bytes_to_downloads(data, filename, open_after=True)
+            if saved:
+                st.success(f"저장했습니다: {saved}")
+            else:
+                st.error("저장에 실패했습니다.")
+    else:
+        st.download_button(
+            label, data=data, file_name=filename, mime=_XLSX_MIME,
+            width="stretch", key=key, disabled=disabled, help=help,
+        )
 
 
 @st.dialog("엑셀 파일 생성", width="large")
