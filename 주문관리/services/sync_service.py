@@ -577,16 +577,51 @@ def advance_settled_orders(recognition_days: int = 45, progress=None) -> dict:
 
 def close_returned_active_orders() -> dict:
     """활성(신규주문/발송대기/배송중) 주문 중 '반품·취소 완료'된 건을 주문종료로 정리합니다.
-    (반품/취소가 끝났는데 앱엔 아직 배송중 등으로 남던 데이터 불일치를 없앱니다.)
-    ※ 배송완료/구매확정은 건드리지 않습니다 — 쿠팡은 반품완료돼도 '배송완료(FINAL_DELIVERY)'
-      상태를 유지하기 때문입니다(배송상태와 반품은 별개). 그래서 반품이력이 있어도 배송완료/
-      구매확정에 그대로 둡니다.
-    반환: {status, closed_count, error_message}"""
+    ★단, 클레임만 보고 바로 닫지 않고 '쿠팡에 건별로 실제 상태를 물어봐서(probe)' 결정합니다:
+      - 쿠팡이 뺐다(removed, 400 "취소 또는 반품") → 주문종료.
+      - 쿠팡이 아직 활성 상태를 준다(status=INSTRUCT/DEPARTURE 등) → 그대로 둠(살아있음).
+      - 조회 실패(error) → 오판 방지로 건드리지 않음.
+    (예전엔 완료 반품 표시만 보고 닫아서, 취소 철회로 재활성된 발송대기 주문이 수집마다
+     발송대기↔주문종료를 무한 왕복하며 목록에서 사라졌습니다. 실측 2026-10 이주희 건.)
+    ※ 배송완료/구매확정은 reconcile_returned_final_orders가 따로 담당합니다.
+    반환: {status, closed_count, kept_count, error_message}"""
     try:
-        n = order_repository.close_active_orders_with_completed_claims()
-        return {"status": "success", "closed_count": n, "error_message": None}
+        targets = order_repository.list_active_orders_with_completed_claims()
     except Exception as error:  # noqa: BLE001
-        return {"status": "fail", "closed_count": 0, "error_message": str(error)}
+        return {"status": "fail", "closed_count": 0, "kept_count": 0, "error_message": str(error)}
+    if not targets:
+        return {"status": "success", "closed_count": 0, "kept_count": 0, "error_message": None}
+
+    clients = {}
+    closed = kept = errors = 0
+    for o in targets:
+        acc_id = o.get("market_account_id")
+        client = clients.get(acc_id)
+        if client is None:
+            account = market_repository.get_market_account(acc_id) if acc_id else None
+            if not account:
+                errors += 1
+                continue
+            client = clients[acc_id] = _client_for_account(account)
+        try:
+            kind, _detail = client.probe_order_state(o["market_order_id"])
+        except Exception:  # noqa: BLE001
+            errors += 1
+            kind = "error"
+        if kind == "removed":
+            order_repository.update_work_status(
+                o["id"], models.WORK_STATUS_CLOSED, changed_by="auto-close-returned"
+            )
+            closed += 1
+        elif kind == "status":
+            kept += 1  # 쿠팡이 아직 활성으로 유지 → 그대로 둠
+        # error → 건드리지 않음
+    return {
+        "status": "success",
+        "closed_count": closed,
+        "kept_count": kept,
+        "error_message": (f"{errors}건 조회불가(그대로 둠)" if errors else None),
+    }
 
 
 def reconcile_returned_final_orders(progress=None) -> dict:

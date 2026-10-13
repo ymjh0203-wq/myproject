@@ -1244,6 +1244,37 @@ def close_active_orders_with_completed_claims() -> int:
     return len(order_ids)
 
 
+def list_active_orders_with_completed_claims() -> list:
+    """활성(신규주문/발송대기/배송중) 주문 중 '완료된 반품/취소(RETURNS_COMPLETED)' 클레임이
+    있는 주문을 돌려줍니다(종료하지 않고 '목록만'). 쿠팡에 건별로 실제 상태를 물어봐서
+    '쿠팡이 실제로 뺀 것만' 주문종료로 정리하기 위한 대상입니다.
+    ★왜 건별 확인이 필요한가: 완료 반품 표시가 남아 있어도 쿠팡은 그 주문을 아직 활성
+      (예: 취소 철회로 발송대기 INSTRUCT 재활성)으로 유지하는 경우가 있습니다. 그때는 닫으면
+      안 됩니다(안 그러면 수집마다 발송대기↔주문종료를 무한 왕복). 실측(2026-10 이주희 건)."""
+    active = (
+        models.WORK_STATUS_NEW,
+        models.WORK_STATUS_READY_TO_SHIP,
+        models.WORK_STATUS_SHIPPING,
+    )
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT orders.id, orders.market_order_id, orders.market_account_id,
+                   orders.work_status, orders.ordered_at
+            FROM orders
+            JOIN claims ON claims.market_order_id = orders.market_order_id
+            WHERE orders.work_status IN ({",".join("?" for _ in active)})
+              AND claims.claim_type IN ('RETURN', 'CANCEL')
+              AND claims.receipt_status = 'RETURNS_COMPLETED'
+            """,
+            active,
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        connection.close()
+
+
 def list_final_orders_with_claims() -> list:
     """배송완료·구매확정 주문 중 반품/취소 클레임이 있는 주문을 돌려줍니다(종료하지 않고 '목록만').
     쿠팡에 건별로 실제 상태를 물어봐서, 쿠팡이 실제로 뺀 것만 주문종료로 정리하기 위한 대상입니다.
