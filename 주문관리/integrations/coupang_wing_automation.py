@@ -143,6 +143,62 @@ def open_for_login(account_key: str = "") -> None:
         pw.stop()
 
 
+def _active_page(context):
+    """현재 사용자가 보고 있는 페이지(가장 마지막으로 연/활성 탭)를 고릅니다.
+    about:blank·빈 탭은 피하고, wing.coupang.com 페이지를 우선합니다."""
+    pages = [p for p in context.pages if not p.is_closed()]
+    if not pages:
+        return None
+    wing = [p for p in pages if "wing.coupang.com" in (p.url or "")]
+    pool = wing or [p for p in pages if (p.url or "about:blank") != "about:blank"] or pages
+    return pool[-1]
+
+
+def grab(account_key: str = "", wait_seconds: int = 45) -> None:
+    """저장된 세션으로 WING을 '창'으로 띄웁니다(이미 로그인돼 있으면 로그인 불필요).
+    사장님이 '주문 목록' 화면까지 이동하면, wait_seconds 뒤 그 화면을 HTML+스크린샷으로
+    저장합니다. (로그인 자동 감지에 의존하지 않아 가장 확실한 캡처 방법)"""
+    profile_dir = _profile_dir(account_key)
+    pw, context = _launch(account_key, headless=False)
+    try:
+        page = context.pages[0] if context.pages else context.new_page()
+        page.goto(WING_HOME, timeout=60000)
+        print("WING 창이 열렸습니다.", flush=True)
+        print("로그인이 안 돼 있으면 로그인(2차인증 포함)하고, '주문 목록' 화면까지 이동하세요.", flush=True)
+        print(f"{wait_seconds}초 뒤 현재 보고 있는 화면을 자동 저장합니다…", flush=True)
+        # 진행 상황(현재 URL) 몇 번 찍어줍니다.
+        for i in range(wait_seconds, 0, -5):
+            time.sleep(5)
+            ap = _active_page(context)
+            try:
+                print(f"  남은 {i - 5}s · 현재: {ap.url if ap else '?'}", flush=True)
+            except Exception:
+                pass
+        ap = _active_page(context) or page
+        try:
+            html_path = os.path.join(profile_dir, "wing_current.html")
+            png_path = os.path.join(profile_dir, "wing_current.png")
+            with open(html_path, "w", encoding="utf-8") as fp:
+                fp.write(ap.content())
+            try:
+                ap.screenshot(path=png_path, full_page=True)
+            except Exception:
+                pass
+            print(f"SAVED url={ap.url}", flush=True)
+            print(f"SAVED_FILE {html_path}", flush=True)
+            print(f"SAVED_PNG {png_path}", flush=True)
+        except Exception as error:
+            print(f"DUMP_FAILED: {error}", flush=True)
+    except Exception as error:
+        print(f"ERROR: {error}", flush=True)
+    finally:
+        try:
+            context.close()
+        except Exception:
+            pass
+        pw.stop()
+
+
 def is_logged_in(account_key: str = "") -> bool:
     """전용 프로필이 WING에 로그인된 상태인지 (창 없이) 확인합니다."""
     pw, context = _launch(account_key, headless=True)
@@ -164,7 +220,9 @@ if __name__ == "__main__":
     acct = sys.argv[2] if len(sys.argv) > 2 else ""
     if cmd == "login":
         open_for_login(acct)
+    elif cmd == "grab":
+        grab(acct)
     elif cmd == "check":
         print("LOGGED_IN" if is_logged_in(acct) else "NOT_LOGGED_IN", flush=True)
     else:
-        print("사용법: python -m integrations.coupang_wing_automation [login|check] [계정키]", flush=True)
+        print("사용법: python -m integrations.coupang_wing_automation [login|grab|check] [계정키]", flush=True)

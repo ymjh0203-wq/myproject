@@ -30,11 +30,12 @@ if errorlevel 1 (
 )
 
 echo.
-echo A Chrome window will open. Log into Coupang WING there (do 2FA if asked),
-echo then open the ORDER LIST page and leave it. This window will report progress.
+echo A Chrome window will open with your saved WING session.
+echo If not logged in yet, log in (incl. 2FA). Then open the ORDER LIST page
+echo and leave it - the current screen will be saved automatically after ~45s.
 echo.
 
-.venv\Scripts\python.exe -m integrations.coupang_wing_automation login
+.venv\Scripts\python.exe -m integrations.coupang_wing_automation grab
 
 echo.
 echo Done. You can close this window.
