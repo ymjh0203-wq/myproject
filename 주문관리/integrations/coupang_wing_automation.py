@@ -154,41 +154,70 @@ def _active_page(context):
     return pool[-1]
 
 
-def grab(account_key: str = "", wait_seconds: int = 45) -> None:
+_ORDER_URL_HINTS = ("order", "delivery", "shipment", "sfl", "fulfillment", "ship")
+
+
+def _save_page(ap, profile_dir: str) -> bool:
+    """활성 페이지를 HTML+스크린샷으로 저장. 내용이 비어있지 않으면 True."""
+    try:
+        html = ap.content() or ""
+    except Exception:
+        html = ""
+    if len(html) < 500:  # 사실상 빈 페이지(로딩중/about:blank)
+        return False
+    html_path = os.path.join(profile_dir, "wing_current.html")
+    png_path = os.path.join(profile_dir, "wing_current.png")
+    with open(html_path, "w", encoding="utf-8") as fp:
+        fp.write(html)
+    try:
+        ap.screenshot(path=png_path, full_page=True)
+    except Exception:
+        pass
+    print(f"SAVED url={ap.url}", flush=True)
+    print(f"SAVED_FILE {html_path} ({len(html):,} bytes)", flush=True)
+    print(f"SAVED_PNG {png_path}", flush=True)
+    return True
+
+
+def grab(account_key: str = "", wait_seconds: int = 120) -> None:
     """저장된 세션으로 WING을 '창'으로 띄웁니다(이미 로그인돼 있으면 로그인 불필요).
-    사장님이 '주문 목록' 화면까지 이동하면, wait_seconds 뒤 그 화면을 HTML+스크린샷으로
-    저장합니다. (로그인 자동 감지에 의존하지 않아 가장 확실한 캡처 방법)"""
+    사장님이 '주문 목록(주문/배송 → 배송지시 등)' 화면으로 이동하면, 그 화면의 주소가
+    주문 페이지로 바뀐 걸 감지해 자동 저장합니다. (못 감지해도 끝에 현재 화면을 저장)"""
     profile_dir = _profile_dir(account_key)
     pw, context = _launch(account_key, headless=False)
     try:
         page = context.pages[0] if context.pages else context.new_page()
         page.goto(WING_HOME, timeout=60000)
-        print("WING 창이 열렸습니다.", flush=True)
-        print("로그인이 안 돼 있으면 로그인(2차인증 포함)하고, '주문 목록' 화면까지 이동하세요.", flush=True)
-        print(f"{wait_seconds}초 뒤 현재 보고 있는 화면을 자동 저장합니다…", flush=True)
-        # 진행 상황(현재 URL) 몇 번 찍어줍니다.
-        for i in range(wait_seconds, 0, -5):
+        print("WING 창이 열렸습니다. (이미 로그인돼 있을 거예요)", flush=True)
+        print("왼쪽 메뉴 '주문/배송 → 배송지시(또는 주문 목록)'로 들어가 주문 목록을 띄워주세요.", flush=True)
+        print("주문 목록 화면이 되면 자동 저장합니다. (최대 2분 대기)", flush=True)
+
+        saved = False
+        elapsed = 0
+        while elapsed < wait_seconds:
             time.sleep(5)
+            elapsed += 5
             ap = _active_page(context)
-            try:
-                print(f"  남은 {i - 5}s · 현재: {ap.url if ap else '?'}", flush=True)
-            except Exception:
-                pass
-        ap = _active_page(context) or page
+            url = (ap.url if ap else "") or ""
+            print(f"  현재: {url}", flush=True)
+            low = url.lower()
+            # 주문/배송 관련 URL로 보이고 내용이 차 있으면 저장하고 종료.
+            if ap and "wing.coupang.com" in low and any(h in low for h in _ORDER_URL_HINTS):
+                if _save_page(ap, profile_dir):
+                    saved = True
+                    break
+        if not saved:
+            # 감지 못했으면 현재 화면이라도 저장(빈 페이지면 2초 뒤 재시도).
+            ap = _active_page(context) or page
+            if not _save_page(ap, profile_dir):
+                time.sleep(2)
+                if not _save_page(ap, profile_dir):
+                    print("DUMP_EMPTY: 현재 화면 내용을 읽지 못했습니다(주문 목록을 띄우고 다시 시도).", flush=True)
+        # 저장 후, 어떤 탭들이 있었는지 참고용으로 남깁니다.
         try:
-            html_path = os.path.join(profile_dir, "wing_current.html")
-            png_path = os.path.join(profile_dir, "wing_current.png")
-            with open(html_path, "w", encoding="utf-8") as fp:
-                fp.write(ap.content())
-            try:
-                ap.screenshot(path=png_path, full_page=True)
-            except Exception:
-                pass
-            print(f"SAVED url={ap.url}", flush=True)
-            print(f"SAVED_FILE {html_path}", flush=True)
-            print(f"SAVED_PNG {png_path}", flush=True)
-        except Exception as error:
-            print(f"DUMP_FAILED: {error}", flush=True)
+            print("PAGES: " + " | ".join(p.url for p in context.pages if not p.is_closed()), flush=True)
+        except Exception:
+            pass
     except Exception as error:
         print(f"ERROR: {error}", flush=True)
     finally:
