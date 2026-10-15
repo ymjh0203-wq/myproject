@@ -1514,18 +1514,35 @@ def _render_taobao_links_for_code(code: str, name: str, key_prefix: str) -> None
                 taobao_link_repository.delete(lk["id"])
                 st.rerun()
 
-    # ★이 상품코드엔 링크가 없지만, '같은 상품명'으로 다른 코드에 저장된 링크가 있으면 보여줍니다.
-    #   (상품을 다른 마켓으로 옮기면 쿠팡 상품코드가 바뀌어 0개가 되던 문제 해결)
-    #   '이 상품에도 연결'을 누르면 새 상품코드에도 복사돼, 다음부터는 바로 뜹니다.
-    if not links and name:
+    # ★'같은 상품명'으로 다른 코드에 저장된 링크 중, 이 코드에 '아직 없는' 것만 보여줍니다.
+    #   (상품을 다른 마켓으로 옮기면 쿠팡 상품코드가 바뀌어 링크가 0개가 되던 문제 해결)
+    #   이미 연결한 링크는 빼고 계산하므로, 하나를 연결해도 나머지 미연결 링크가 계속 보입니다.
+    #   링크가 여러 개면 '모두 이 상품에 연결'로 한 번에 옮길 수 있습니다.
+    if name:
+        existing_urls = {str(lk.get("url") or "").strip() for lk in links}
         name_links = taobao_link_repository.list_by_product_name(name, exclude_code=code)
-        if name_links:
-            st.info(f"이 상품코드엔 링크가 없지만, **같은 상품명**으로 저장된 링크 {len(name_links)}개를 찾았습니다. "
-                    "(다른 마켓/상품코드에 저장해둔 것) '이 상품에도 연결'을 누르면 이 코드에도 저장됩니다.")
-            for lk in name_links:
+        # url 중복 제거 + 이 코드에 이미 있는 건 제외
+        missing, _seen = [], set()
+        for nl in name_links:
+            u = str(nl.get("url") or "").strip()
+            if not u or u in existing_urls or u in _seen:
+                continue
+            _seen.add(u)
+            missing.append(nl)
+        if missing:
+            st.info(f"**같은 상품명**으로 저장된 링크 {len(missing)}개가 이 상품코드엔 아직 없습니다. "
+                    "(다른 마켓/상품코드에 저장해둔 것) 아래에서 열거나, 이 상품코드에 연결할 수 있습니다.")
+            if st.button(f"➕ 모두 이 상품에 연결 ({len(missing)}개)",
+                         key=f"tb_linkall_{key_prefix}_{code}", type="primary", width="stretch",
+                         help="찾은 링크 전부를 이 상품코드에도 저장합니다."):
+                for nl in missing:
+                    taobao_link_repository.add(code, name, nl["url"], label=nl.get("label"))
+                st.success(f"{len(missing)}개를 이 상품코드에 연결했습니다.")
+                st.rerun()
+            for lk in missing:
                 label = lk.get("label") or "링크"
                 old_code = lk.get("seller_product_code") or "?"
-                cols = st.columns([4, 1, 1])
+                cols = st.columns([4, 1])
                 with cols[0]:
                     if st.button(f"🔗 열기 · {label} (코드 {old_code})",
                                  key=f"tb_nopen_{key_prefix}_{lk['id']}", width="stretch"):
@@ -1533,14 +1550,11 @@ def _render_taobao_links_for_code(code: str, name: str, key_prefix: str) -> None
                             st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
                             st.code(lk["url"])
                 with cols[1]:
-                    if st.button("이 상품에도 연결", key=f"tb_link_{key_prefix}_{lk['id']}",
-                                 type="primary", width="stretch",
-                                 help="이 상품코드에도 이 링크를 저장해, 다음부터 바로 뜨게 합니다."):
+                    if st.button("이것만 연결", key=f"tb_link_{key_prefix}_{lk['id']}",
+                                 width="stretch", help="이 링크 하나만 이 상품코드에 저장합니다."):
                         taobao_link_repository.add(code, name, lk["url"], label=lk.get("label"))
-                        st.success("이 상품코드에도 연결했습니다.")
+                        st.success("이 상품코드에 연결했습니다.")
                         st.rerun()
-                with cols[2]:
-                    st.caption("")
 
     with st.expander(f"➕ 타오바오 링크 추가  (상품코드 {code}, 현재 {len(links)}개)", expanded=not links):
         new_label = st.text_input("구분 이름(선택)", key=f"tb_lbl_{key_prefix}_{code}",
