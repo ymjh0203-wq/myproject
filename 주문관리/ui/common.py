@@ -1514,6 +1514,34 @@ def _render_taobao_links_for_code(code: str, name: str, key_prefix: str) -> None
                 taobao_link_repository.delete(lk["id"])
                 st.rerun()
 
+    # ★이 상품코드엔 링크가 없지만, '같은 상품명'으로 다른 코드에 저장된 링크가 있으면 보여줍니다.
+    #   (상품을 다른 마켓으로 옮기면 쿠팡 상품코드가 바뀌어 0개가 되던 문제 해결)
+    #   '이 상품에도 연결'을 누르면 새 상품코드에도 복사돼, 다음부터는 바로 뜹니다.
+    if not links and name:
+        name_links = taobao_link_repository.list_by_product_name(name, exclude_code=code)
+        if name_links:
+            st.info(f"이 상품코드엔 링크가 없지만, **같은 상품명**으로 저장된 링크 {len(name_links)}개를 찾았습니다. "
+                    "(다른 마켓/상품코드에 저장해둔 것) '이 상품에도 연결'을 누르면 이 코드에도 저장됩니다.")
+            for lk in name_links:
+                label = lk.get("label") or "링크"
+                old_code = lk.get("seller_product_code") or "?"
+                cols = st.columns([4, 1, 1])
+                with cols[0]:
+                    if st.button(f"🔗 열기 · {label} (코드 {old_code})",
+                                 key=f"tb_nopen_{key_prefix}_{lk['id']}", width="stretch"):
+                        if not open_in_chrome(lk["url"]):
+                            st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
+                            st.code(lk["url"])
+                with cols[1]:
+                    if st.button("이 상품에도 연결", key=f"tb_link_{key_prefix}_{lk['id']}",
+                                 type="primary", width="stretch",
+                                 help="이 상품코드에도 이 링크를 저장해, 다음부터 바로 뜨게 합니다."):
+                        taobao_link_repository.add(code, name, lk["url"], label=lk.get("label"))
+                        st.success("이 상품코드에도 연결했습니다.")
+                        st.rerun()
+                with cols[2]:
+                    st.caption("")
+
     with st.expander(f"➕ 타오바오 링크 추가  (상품코드 {code}, 현재 {len(links)}개)", expanded=not links):
         new_label = st.text_input("구분 이름(선택)", key=f"tb_lbl_{key_prefix}_{code}",
                                   placeholder="예: 1번 / 저렴이 / 예비")
