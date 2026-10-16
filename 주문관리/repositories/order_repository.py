@@ -1298,12 +1298,30 @@ def list_final_orders_with_claims() -> list:
         connection.close()
 
 
-def close_delivered_orders_with_returns() -> int:
-    """배송완료·구매확정 주문 중 '반품 클레임'(신청·완료 무관)이 있는 건을 '주문종료'로 정리합니다.
-    쿠팡처럼 반품신청이 오면(또는 바로 환불완료돼도) 배송완료/구매확정(판매) 목록에서 빠지게 합니다.
-    → 반품/환불된 건이 배송완료·판매(구매확정)로 잘못 남지 않고, 반품완료에서만 보입니다.
-    (반품 클레임 상태는 실측상 RETURNS_UNCHECKED=반품접수 / RETURNS_COMPLETED=환불완료 뿐이라
-     둘 다 '실제 반품'이므로 그대로 종료 처리합니다.) 정리한 건수를 돌려줍니다."""
+def order_has_completed_refund(order_id: int) -> bool:
+    """이 주문(id)에 '환불완료(RETURNS_COMPLETED)' 반품 클레임이 있는지. (되살림 가드용)
+    → 환불완료된 배송완료/구매확정 건을 수집 때 다시 배송완료로 되살리지 않게 할 때 씁니다."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT 1 FROM claims
+            WHERE claims.receipt_status = 'RETURNS_COMPLETED'
+              AND claims.market_order_id = (SELECT market_order_id FROM orders WHERE id = ?)
+            LIMIT 1
+            """,
+            (order_id,),
+        ).fetchone()
+        return bool(row)
+    finally:
+        connection.close()
+
+
+def close_refunded_final_orders() -> int:
+    """배송완료·구매확정 주문 중 '환불완료(RETURNS_COMPLETED)'된 건을 '주문종료'로 정리합니다.
+    환불완료 = 돈이 이미 환불된 '끝난' 건이라 판매가 아니므로, 배송완료·구매확정(판매) 목록에서
+    빼고 반품완료에서만 보이게 합니다. (반품접수 '진행중'은 아직 끝난 게 아니라 건드리지 않음)
+    정리한 건수를 돌려줍니다."""
     targets = (models.WORK_STATUS_DELIVERED, models.WORK_STATUS_PURCHASE_CONFIRMED)
     connection = get_connection()
     try:
@@ -1313,7 +1331,8 @@ def close_delivered_orders_with_returns() -> int:
             FROM orders
             JOIN claims ON claims.market_order_id = orders.market_order_id
             WHERE orders.work_status IN ({",".join("?" for _ in targets)})
-              AND claims.claim_type = 'RETURN'
+              AND claims.claim_type IN ('RETURN', 'CANCEL')
+              AND claims.receipt_status = 'RETURNS_COMPLETED'
             """,
             targets,
         ).fetchall()
@@ -1322,7 +1341,7 @@ def close_delivered_orders_with_returns() -> int:
         connection.close()
 
     for order_id in order_ids:
-        update_work_status(order_id, models.WORK_STATUS_CLOSED, changed_by="auto-close-returned-delivered")
+        update_work_status(order_id, models.WORK_STATUS_CLOSED, changed_by="auto-close-refunded")
     return len(order_ids)
 
 

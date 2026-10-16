@@ -108,6 +108,13 @@ def _maybe_advance_work_status(order_id: int, current_status: str, target_status
     #   고객이 철회) 되살립니다. 쿠팡이 배송지시(DEPARTURE) 등 활성 상태로 돌려준다는 건
     #   그 취소·반품이 되돌려졌다는 뜻이라, 쿠팡 실제 상태대로 그 단계로 복귀시킵니다.
     if current_status == models.WORK_STATUS_CLOSED:
+        # ★환불완료(RETURNS_COMPLETED)된 건을 '배송완료/구매확정'으로 되살리지 않습니다.
+        #   쿠팡은 환불돼도 배송완료(FINAL_DELIVERY)를 유지해, 수집 때 되살아나 주문종료와
+        #   무한 왕복할 수 있기 때문입니다. (발송대기/배송중 등 배송 전 단계로의 복귀는 허용
+        #   — 취소 철회로 쿠팡이 다시 활성화한 경우라 되살려야 함. 실측 이주희 건)
+        if target_status in (models.WORK_STATUS_DELIVERED, models.WORK_STATUS_PURCHASE_CONFIRMED) \
+                and order_repository.order_has_completed_refund(order_id):
+            return
         order_repository.update_work_status(order_id, target_status, changed_by="auto-revive")
         return
     try:
@@ -622,6 +629,17 @@ def close_returned_active_orders() -> dict:
         "kept_count": kept,
         "error_message": (f"{errors}건 조회불가(그대로 둠)" if errors else None),
     }
+
+
+def close_refunded_final_orders() -> dict:
+    """배송완료·구매확정 주문 중 '환불완료(RETURNS_COMPLETED)'된 건을 주문종료로 정리합니다.
+    (환불 끝난 건은 판매가 아니므로 배송완료·구매확정에서 빼고 반품완료에서만 보이게)
+    반환: {status, closed_count, error_message}"""
+    try:
+        n = order_repository.close_refunded_final_orders()
+        return {"status": "success", "closed_count": n, "error_message": None}
+    except Exception as error:  # noqa: BLE001
+        return {"status": "fail", "closed_count": 0, "error_message": str(error)}
 
 
 def reconcile_returned_final_orders(progress=None) -> dict:

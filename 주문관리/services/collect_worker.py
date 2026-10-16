@@ -196,6 +196,11 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                 closed_c += rf.get("closed_count", 0) or 0
                 if rf.get("error_message"):
                     errors.append(rf["error_message"])
+                # 환불완료된 배송완료/구매확정 건을 주문종료로 정리(판매에서 빼고 반품완료에서만).
+                cr = sync_service.close_refunded_final_orders()
+                closed_c += cr.get("closed_count", 0) or 0
+                if cr.get("error_message"):
+                    errors.append(cr["error_message"])
             except Exception as error:  # noqa: BLE001
                 errors.append(str(error))
             done += 1
