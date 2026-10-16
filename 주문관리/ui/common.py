@@ -877,10 +877,35 @@ def _suppress_number_as_text(xlsx_bytes: bytes) -> bytes:
         return xlsx_bytes
 
 
+def _style_excel(xlsx_bytes: bytes) -> bytes:
+    """앱이 만드는 엑셀을 보기 좋게: 모든 셀 '가운데 정렬' + 얇은 '테두리(셀 선)', 머리글은 굵게.
+    (사장님 매출 양식처럼 글씨 가운데·셀 선이 그려지게 함. 값은 그대로)"""
+    try:
+        import openpyxl
+        from openpyxl.styles import Alignment, Border, Font, Side
+
+        wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+        thin = Side(style="thin", color="000000")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center = Alignment(horizontal="center", vertical="center", wrap_text=False)
+        for ws in wb.worksheets:
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.alignment = center
+                    cell.border = border
+            for cell in ws[1]:  # 머리글(첫 줄) 굵게
+                cell.font = Font(bold=True)
+        out = io.BytesIO()
+        wb.save(out)
+        return out.getvalue()
+    except Exception:  # noqa: BLE001 (스타일 실패해도 데이터는 정상)
+        return xlsx_bytes
+
+
 def build_excel_bytes(rows: list) -> bytes:
     buffer = io.BytesIO()
     pd.DataFrame(rows).to_excel(buffer, index=False, engine="openpyxl")
-    return _suppress_number_as_text(buffer.getvalue())
+    return _suppress_number_as_text(_style_excel(buffer.getvalue()))
 
 
 # 사용자 정의 엑셀 양식에서 컬럼 '값'으로 고를 수 있는 특수 항목(주문 컬럼이 아닌 것).
@@ -918,7 +943,7 @@ def build_excel_from_template(full_rows: list, template_columns: list) -> bytes:
     buffer = io.BytesIO()
     # columns=headers 로 넘기면 제목이 중복돼도(양식에서 같은 제목 두 번 써도) 안전합니다.
     pd.DataFrame(data, columns=headers).to_excel(buffer, index=False, engine="openpyxl")
-    return _suppress_number_as_text(buffer.getvalue())
+    return _suppress_number_as_text(_style_excel(buffer.getvalue()))
 
 
 def render_template_excel_download(excel_rows: list, key: str, filename: str) -> None:

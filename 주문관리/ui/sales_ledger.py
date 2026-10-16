@@ -390,4 +390,5 @@ def _build_maechul_xlsx(orders: list, edited, rate: float, account_name: str) ->
 
     buf = io.BytesIO()
     wb.save(buf)
-    return buf.getvalue()
+    # 글씨 가운데 정렬 + 셀 테두리(사장님 매출 양식처럼 보기 좋게).
+    return common._style_excel(buf.getvalue())
