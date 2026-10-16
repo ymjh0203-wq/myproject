@@ -878,11 +878,11 @@ def _suppress_number_as_text(xlsx_bytes: bytes) -> bytes:
 
 
 def _style_excel(xlsx_bytes: bytes) -> bytes:
-    """앱이 만드는 엑셀을 보기 좋게: 모든 셀 '가운데 정렬' + 얇은 '테두리(셀 선)', 머리글은 굵게.
-    (사장님 매출 양식처럼 글씨 가운데·셀 선이 그려지게 함. 값은 그대로)"""
+    """앱이 만드는 엑셀을 보기 좋게: 모든 셀 '가운데 정렬' + 얇은 '테두리(셀 선)'.
+    글꼴 굵기는 기존 시트처럼 '보통'으로 둡니다(머리글도 굵게 안 함). 값은 그대로."""
     try:
         import openpyxl
-        from openpyxl.styles import Alignment, Border, Font, Side
+        from openpyxl.styles import Alignment, Border, Side
 
         wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
         thin = Side(style="thin", color="000000")
@@ -893,8 +893,6 @@ def _style_excel(xlsx_bytes: bytes) -> bytes:
                 for cell in row:
                     cell.alignment = center
                     cell.border = border
-            for cell in ws[1]:  # 머리글(첫 줄) 굵게
-                cell.font = Font(bold=True)
         out = io.BytesIO()
         wb.save(out)
         return out.getvalue()
