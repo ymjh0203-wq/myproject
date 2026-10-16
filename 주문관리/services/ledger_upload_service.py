@@ -20,6 +20,17 @@ from repositories import order_repository
 from services import ledger_match
 
 
+def _match_cell_style(dst, ref) -> None:
+    """채워 넣는 칸(dst)이 그 행의 기존 칸(ref)과 똑같이 보이게 — 글꼴·가운데정렬·테두리를 복사.
+    (사장님 시트가 가운데정렬+테두리인데 채운 칸만 동떨어져 보이던 문제 해결)"""
+    try:
+        dst.font = copy.copy(ref.font)
+        dst.alignment = copy.copy(ref.alignment)
+        dst.border = copy.copy(ref.border)
+    except Exception:  # noqa: BLE001 (서식 복사 실패해도 값은 들어감)
+        pass
+
+
 # 헤더 이름 후보(엑셀마다 약간 달라도 잡히게 여러 개 허용)
 _H_ORDER = ["마켓 주문번호", "마켓주문번호", "주문번호"]
 _H_QTY = ["주문수량", "수량"]
@@ -169,7 +180,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
     _hdr_ref = col_order or col_gr or col_cost
     _hdr_cell = ws.cell(1, col_note)
     _hdr_cell.value = _NOTE_HEADER
-    _hdr_cell.font = copy.copy(ws.cell(1, _hdr_ref).font)
+    _match_cell_style(_hdr_cell, ws.cell(1, _hdr_ref))
 
     # 앱 DB: 마켓주문번호 → GR
     gr_map = order_repository.get_gr_by_market_order_ids() if hasattr(
@@ -238,7 +249,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
             _dnote = f"중복 주문번호(시트에 {dup_counts[_dupkey]}건) — 건너뜀"
             _dc = ws.cell(r, col_note)
             _dc.value = _dnote
-            _dc.font = copy.copy(ws.cell(r, _ref_col).font)
+            _match_cell_style(_dc, ws.cell(r, _ref_col))
             notes.append((label, _dnote))
             if progress:
                 try:
@@ -286,18 +297,18 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                         stats["mismatch"] += 1
                         reasons.append(mreason or "수취인 대조 실패(안 채움)")
                     else:
-                        # 일치(인증) → 단가·배송비 채우기. 셀 폰트는 그 행과 동일하게.
-                        _row_font = copy.copy(ws.cell(r, _ref_col).font)
+                        # 일치(인증) → 단가·배송비 채우기. 셀 서식(글꼴·가운데정렬·테두리)을 그 행과 동일하게.
+                        _ref_cell = ws.cell(r, _ref_col)
                         if unit is not None:
                             _cc = ws.cell(r, col_cost)
                             _cc.value = unit
-                            _cc.font = copy.copy(_row_font)
+                            _match_cell_style(_cc, _ref_cell)
                             _cc.number_format = "0.00"   # 단가(CNY) 소수 2자리
                             stats["filled_price"] += 1
                         if ship is not None:
                             _sc = ws.cell(r, col_ship)
                             _sc.value = ship
-                            _sc.font = copy.copy(_row_font)
+                            _match_cell_style(_sc, _ref_cell)
                             _sc.number_format = "#,##0"  # 배송비 천단위
                             stats["filled_ship"] += 1
                         if unit is None and ship is None:
@@ -319,7 +330,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
                     stats["err"] += 1
         _nc = ws.cell(r, col_note)
         _nc.value = note
-        _nc.font = copy.copy(ws.cell(r, _ref_col).font)  # 비고도 그 행 폰트와 통일
+        _match_cell_style(_nc, ws.cell(r, _ref_col))  # 비고도 그 행 서식(글꼴·정렬·테두리)과 통일
         if note:
             notes.append((label, note))
         if progress:
