@@ -190,6 +190,25 @@ def _sync_everything() -> None:
                 continue
             errors.append(f"{label}: {result.get('error_message')}")
 
+    # ★수집이 끝난 뒤 '전진·정리'까지 한 번에 돌립니다. (이게 없으면 홈 전체 새로고침만으로는
+    #   배송완료 전진·환불완료 정리·배송완료 반품 정리 등이 안 돌아 데이터가 계속 어긋났습니다.)
+    #   DB를 서로 건드리는 순서가 있어 순차(max_workers=1)로 실행합니다.
+    cleanup_jobs = [
+        ("배송완료 전진", lambda: sync_service.advance_delivered_orders()),
+        ("활성 완료반품 정리", lambda: sync_service.close_returned_active_orders()),
+        ("정산→구매확정", lambda: sync_service.advance_settled_orders(recognition_days=20)),
+        ("배송완료→구매확정(30일)", lambda: sync_service.advance_confirmed_orders()),
+        ("배송완료 반품 정리", lambda: sync_service.reconcile_returned_final_orders()),
+        ("환불완료 정리", lambda: sync_service.close_refunded_final_orders()),
+    ]
+    cleanup_progress = [(lbl, (lambda j=job: _run(j))) for lbl, job in cleanup_jobs]
+    cleanup_results = common.run_jobs_with_progress(
+        cleanup_progress, label="데이터 정리 중(전진·종료)", max_workers=1
+    )
+    for lbl, result in cleanup_results:
+        if result.get("status") == "fail":
+            errors.append(f"{lbl}: {result.get('error_message')}")
+
     if errors:
         st.session_state["home_sync_errors"] = errors
 
@@ -281,8 +300,9 @@ def render() -> None:
     if st.session_state.get("home_full_sync_done"):
         st.session_state.pop("home_full_sync_done")
         st.success(
-            "신규주문·발송대기·배송중·배송완료·취소요청·반품요청·교환요청·상품문의를 "
-            "다시 확인했습니다. (구매확정·콜센터문의는 쿠팡 API 문제로 제외)"
+            "전체 수집 + 정리를 완료했습니다. (주문 4단계·취소·반품·교환·상품문의 수집 → "
+            "배송완료/구매확정 전진 · 환불완료/완료반품 주문종료 정리까지 한 번에) "
+            "콜센터문의는 쿠팡 API 문제로 제외."
         )
 
     _render_dashboard()
