@@ -52,6 +52,9 @@ def render() -> None:
         result = st.session_state.pop("new_orders_move_result")
         if result["moved_count"]:
             st.success(f"{result['moved_count']}건을 발송대기로 이동했습니다.")
+        if result.get("closed_count"):
+            st.info(f"{result['closed_count']}건은 쿠팡에서 이미 취소된 주문이라 주문종료로 정리했습니다. "
+                    "(신규주문에서 사라집니다)")
         if result["failed"]:
             failure_lines = "\n".join(
                 f"- {item['market_order_id']}: {item['message']}" for item in result["failed"]

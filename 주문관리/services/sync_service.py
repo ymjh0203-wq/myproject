@@ -947,6 +947,7 @@ def _recover_already_advanced_orders(client, pending_orders: list) -> tuple:
         live_by_id = {}
 
     recovered = 0
+    closed = 0
     still_failed = []
     for order in pending_orders:
         found = live_by_id.get(order["market_order_id"])
@@ -958,8 +959,22 @@ def _recover_already_advanced_orders(client, pending_orders: list) -> tuple:
             _save_one_order(found, target, order.get("market_account_id"))
             recovered += 1
         else:
-            still_failed.append(order)
-    return recovered, still_failed
+            # 라이브(상품준비중 이상) 목록에 없음 → 쿠팡에 건별로 물어봐서,
+            # '취소·반품으로 빠진(removed)' 주문이면 주문종료로 정리합니다.
+            # (취소된 주문이 신규주문에 남아 주문확인 때마다 "배송상태를 변경할 수 없습니다"로
+            #  계속 실패하던 문제. 실측 2026-10 최병문 건)
+            try:
+                kind, _detail = client.probe_order_state(order["market_order_id"])
+            except Exception:  # noqa: BLE001
+                kind = "error"
+            if kind == "removed":
+                order_repository.update_work_status(
+                    order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-close-cancelled"
+                )
+                closed += 1
+            else:
+                still_failed.append(order)
+    return recovered, still_failed, closed
 
 
 def move_orders_to_ready_to_ship(orders: list) -> dict:
@@ -981,6 +996,7 @@ def move_orders_to_ready_to_ship(orders: list) -> dict:
         orders_by_account_id.setdefault(order.get("market_account_id"), []).append(order)
 
     moved_count = 0
+    closed_count = 0  # 쿠팡에서 취소되어 주문종료로 정리한 건
     failed = []
 
     for account_orders in orders_by_account_id.values():
@@ -1012,16 +1028,18 @@ def move_orders_to_ready_to_ship(orders: list) -> dict:
                         result["message"] if result else "쿠팡 응답에서 이 주문의 처리 결과를 찾을 수 없습니다."
                     )
 
-        # acknowledge 거부/실패 주문 중 '이미 상품준비중 이상'인 것은 구제(성공 처리).
-        recovered, still_failed = _recover_already_advanced_orders(client, pending)
+        # acknowledge 거부/실패 주문 중 '이미 상품준비중 이상'인 것은 구제(성공 처리),
+        # '취소·반품으로 빠진' 것은 주문종료로 정리(실패 아님).
+        recovered, still_failed, closed = _recover_already_advanced_orders(client, pending)
         moved_count += recovered
+        closed_count += closed
         for order in still_failed:
             failed.append({
                 "market_order_id": order["market_order_id"],
                 "message": pending_message.get(order["id"], "쿠팡 처리에 실패했습니다."),
             })
 
-    return {"moved_count": moved_count, "failed": failed}
+    return {"moved_count": moved_count, "closed_count": closed_count, "failed": failed}
 
 
 def register_invoice_and_move_to_shipping(
