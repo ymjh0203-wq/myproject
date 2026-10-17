@@ -926,7 +926,7 @@ def _recover_already_advanced_orders(client, pending_orders: list) -> tuple:
     돌려주는 값: (구제한 건수, 여전히 실패한 주문 목록)
     """
     if not pending_orders:
-        return 0, []
+        return 0, [], 0
 
     # 조회 기간: 대기 주문들의 결제일 중 가장 이른 날 ~ 오늘 (없으면 최근 14일)
     paid_dates = []
