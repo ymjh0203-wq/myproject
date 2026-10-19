@@ -18,6 +18,8 @@
 import json
 import os
 import sys
+import time
+from datetime import date, timedelta
 
 # 자동화 전용 크롬 프로필(로그인 상태 저장). 앱 창(--app)이나 판매자님 일반
 # 크롬과 겹치지 않게 별도 폴더를 씁니다.
@@ -466,7 +468,10 @@ def daemon() -> None:
                     result = _handle_command(context, active, cmd)
                     with open(RESULT_FILE, "w", encoding="utf-8") as fp:
                         json.dump(result, fp, ensure_ascii=False)
-                    print(f"HANDLED {cmd.get('action')}: {result}", flush=True)
+                    # 결과 전체를 찍으면 콘솔에 신청내역(gr/name/invoice)이 통째로 쏟아져 보기 나쁩니다.
+                    # 간단히 action과 성공 여부만 남깁니다.
+                    _ok = result.get("ok") if isinstance(result, dict) else result
+                    print(f"HANDLED {cmd.get('action')}: ok={_ok}", flush=True)
                     if cmd.get("action") == "stop":
                         break
             _t.sleep(0.25)  # 명령을 빨리 집어들도록 짧게 폴링
@@ -520,12 +525,17 @@ def start_daemon() -> None:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     creationflags = 0
     if os.name == "nt":
-        creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+        # CREATE_NO_WINDOW + CREATE_NEW_PROCESS_GROUP: 검은 콘솔 창이 아예 안 뜨게 합니다.
+        creationflags = 0x08000000 | 0x00000200
+    # 데몬은 상태/결과를 '파일'로 주고받으므로, 콘솔 출력(print)은 전부 버립니다(창·로그 안 보이게).
     subprocess.Popen(
         [sys.executable, "-m", "integrations.quickstar_automation", "daemon"],
         cwd=project_root,
         creationflags=creationflags,
         close_fds=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
 
@@ -617,13 +627,121 @@ def fetch_application_list(limit: int = 40, timeout: int = 30) -> dict:
     return {"ok": True, "rows": rows[:limit]}
 
 
+_APP_LIST_PARSE_JS_FULL = r"""
+() => {
+  const txt = document.body.innerText;
+  const re = /GR(\d{10,})/g; const idxs = []; let m;
+  while ((m = re.exec(txt))) idxs.push({ gr: "GR" + m[1], pos: m.index });
+  const out = [];
+  for (let i = 0; i < idxs.length; i++) {
+    const seg = txt.slice(idxs[i].pos, i + 1 < idxs.length ? idxs[i + 1].pos : txt.length);
+    const name = (seg.match(/([가-힣]{2,4})\s*\((?:해운|항공)/) || [])[1] || "";
+    const inv = (seg.match(/CJ대한통운\s*(\d{10,})/) || [])[1] || "";
+    out.push({ gr: idxs[i].gr, name: name, invoice: inv });
+  }
+  const links = [...new Set([...document.querySelectorAll('a')]
+      .map(a => a.getAttribute('href') || '')
+      .filter(h => /page|list|search|go_page|fn_/i.test(h)))].slice(0, 30);
+  return { rows: out, links: links };
+}
+"""
+
+
+def _parse_current_app_page(timeout: int) -> list:
+    """지금 화면(신청내역)에서 [{gr, name, invoice}] 를 뽑습니다."""
+    res = send_command({"action": "eval", "js": _APP_LIST_PARSE_JS_FULL}, timeout=timeout)
+    data = res.get("result") or {}
+    return data.get("rows") or []
+
+
+def _wait_app_page_loaded(prev_first_gr, timeout: int, tries: int = 12) -> list:
+    """페이지가 (다시) 로딩될 때까지 폴링합니다. 이전 페이지의 첫 GR과 달라지면 '새 페이지 로딩됨'.
+    (검색 제출·페이지 이동 직후엔 잠시 이전 내용이 남아 있어, 첫 GR이 바뀔 때까지 기다립니다)"""
+    rows = []
+    for _ in range(tries):
+        time.sleep(1.5)
+        rows = _parse_current_app_page(timeout)
+        if rows and (prev_first_gr is None or rows[0].get("gr") != prev_first_gr):
+            return rows
+    return rows if (prev_first_gr is None) else []
+
+
+def fetch_all_applications(max_pages: int = 200, timeout: int = 45, progress=None, months_back: int = 12, days_back: int = None) -> dict:
+    """퀵스타 신청내역(배송대행)을 모두 읽어 [{gr, name, invoice}]로 돌려줍니다.
+
+    실제 작동 방식(라이브 조사로 확정):
+      - 목록은 '검색 폼(POST) 제출' 전에는 비어 있음 → 넓은 날짜 + pageblock=100 으로 폼을 채워 제출.
+      - GET ?page=N 은 안 먹힘 → 페이지 이동은 JS 함수 nt_order_list_member(N) 호출.
+      - 제출·페이지이동 직후엔 로딩이 늦어, '첫 GR이 바뀔 때까지' 폴링해서 새 페이지를 읽음.
+    로그인이 풀렸으면 {ok:False, need_login:True}.
+    progress(page, total_rows) 콜백이 있으면 페이지마다 호출합니다."""
+    if not is_ready():
+        return {"ok": False, "msg": "퀵스타 자동화가 준비되지 않았습니다(로그인 필요)."}
+
+    nav = send_command({"action": "nav", "url": _APP_LIST_URL, "wait": "load", "settle": 2}, timeout=timeout)
+    if not nav.get("ok"):
+        return {"ok": False, "msg": nav.get("msg", "신청내역 이동 실패")}
+    if "login.php" in (nav.get("url") or ""):
+        return {"ok": False, "need_login": True, "msg": "퀵스타 로그인이 풀렸습니다. 자동화 창에서 다시 로그인해주세요."}
+
+    # 날짜 범위 + 페이지당 100건으로 검색 제출. days_back이 주어지면 '신청일 기준 최근 N일'만
+    # (예: 7 → 오늘부터 일주일 전까지) → 목록이 작아 빠르고 동명이인도 거의 없음.
+    today = date.today()
+    if days_back is not None:
+        sdate = (today - timedelta(days=days_back)).isoformat()
+    else:
+        sdate = (today - timedelta(days=max(30, months_back * 31))).isoformat()
+    edate = today.isoformat()
+    submit_js = (
+        "() => { const f = document.forms['search']; if (!f) return 'noform';"
+        " try {"
+        f" if (f.elements['sdate']) f.elements['sdate'].value = '{sdate}';"
+        f" if (f.elements['edate']) f.elements['edate'].value = '{edate}';"
+        " if (f.elements['pageblock']) f.elements['pageblock'].value = '100';"
+        " f.submit(); return 'submitted';"
+        " } catch (e) { return 'err:' + e; } }"
+    )
+    send_command({"action": "eval", "js": submit_js}, timeout=timeout)
+
+    all_rows = []
+    seen_gr = set()
+    prev_first = None
+    page = 1
+    while page <= max_pages:
+        if page > 1:
+            send_command(
+                {"action": "eval",
+                 "js": f"() => {{ try {{ nt_order_list_member({page}); return 'ok'; }} catch (e) {{ return String(e); }} }}"},
+                timeout=timeout,
+            )
+        rows = _wait_app_page_loaded(prev_first, timeout)
+        if not rows:
+            break  # 더 이상 새 페이지가 안 뜸 = 끝
+        prev_first = rows[0].get("gr")
+        new = [r for r in rows if r.get("gr") and r["gr"] not in seen_gr]
+        for r in new:
+            seen_gr.add(r["gr"])
+            all_rows.append(r)
+        if progress:
+            try:
+                progress(page, len(all_rows))
+            except Exception:
+                pass
+        if not new or len(rows) < 100:  # 새 GR이 없거나(끝) 마지막 페이지(<100건)면 종료
+            break
+        page += 1
+    return {"ok": True, "rows": all_rows, "pages": page}
+
+
 def find_gr_by_receiver(name: str, timeout: int = 30) -> dict:
     """
     신청내역에서 수취인명이 일치하는 '가장 최근' 신청서(GR)를 찾습니다.
     반환: {ok, gr, name, invoice} 또는 {ok:False, msg}. (need_login 전달)
     ※ 동명이인이 있으면 최신 것을 고르므로, 접수 직후에 부르는 게 정확합니다.
     """
-    r = fetch_application_list(timeout=timeout)
+    # 최근 1페이지(검색폼 제출 → 최신 100건)만 읽어 수취인명으로 찾습니다.
+    # (fetch_all_applications 가 폼 제출·로딩 폴링까지 해줘, 목록이 비어 안 잡히던 문제 없음)
+    r = fetch_all_applications(max_pages=1, timeout=timeout, months_back=2)
     if not r.get("ok"):
         return r
     target = (name or "").strip()
