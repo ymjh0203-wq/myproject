@@ -219,7 +219,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
     gr_cache = {}
     stats = {"rows": 0, "filled_price": 0, "filled_ship": 0,
              "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0,
-             "mismatch": 0, "dup": 0}
+             "mismatch": 0, "dup": 0, "qty_skip": 0}
     notes = []
 
     for idx, r in enumerate(data_rows):
@@ -251,6 +251,22 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
             _dc.value = _dnote
             _match_cell_style(_dc, ws.cell(r, _ref_col))
             notes.append((label, _dnote))
+            if progress:
+                try:
+                    progress(idx + 1, len(data_rows))
+                except Exception:  # noqa: BLE001
+                    pass
+            continue
+
+        # ★주문수량 2개 이상인 행: 단가·배송비 계산이 애매해(단가 합산/배송비 분배 등) 채우지 않고
+        #   사유만 적고 넘어갑니다. (사용자 요청 — 수량 2개 이상은 수기 처리)
+        if qty >= 2:
+            stats["qty_skip"] += 1
+            _qnote = f"수량 {qty}개(2개 이상) — 건너뜀"
+            _qc = ws.cell(r, col_note)
+            _qc.value = _qnote
+            _match_cell_style(_qc, ws.cell(r, _ref_col))
+            notes.append((label, _qnote))
             if progress:
                 try:
                     progress(idx + 1, len(data_rows))
