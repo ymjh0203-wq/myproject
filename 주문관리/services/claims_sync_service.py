@@ -382,13 +382,28 @@ def answer_product_inquiry(inquiry_row_id: int, content: str) -> dict:
             # 이 오류는 답변이 등록되지 않은 상태라, 다른 값으로 다시 보내도 안전합니다.
             if _is_reply_by_error(last_error) and index < len(candidates) - 1:
                 continue
+            if _is_reply_by_error(last_error):
+                return {"succeeded": False, "message": _reply_by_help(account, wing_id)}
             return {"succeeded": False, "message": last_error}
 
         inquiry_repository.mark_product_inquiry_answered(inquiry_row_id, content)
         note = "" if label == "WING 아이디" else " (WING 아이디가 맞지 않아 업체코드로 등록했습니다)"
         return {"succeeded": True, "message": (result.get("message") or "답변이 등록되었습니다.") + note}
 
+    if _is_reply_by_error(last_error or ""):
+        return {"succeeded": False, "message": _reply_by_help(account, wing_id)}
     return {"succeeded": False, "message": last_error or "답변 등록에 실패했습니다."}
+
+
+def _reply_by_help(account: dict, wing_id: str) -> str:
+    """replyBy(WING 아이디) 오류일 때, 어느 상점의 WING 아이디를 고쳐야 하는지 안내 메시지."""
+    name = account.get("market_name") or "이 상점"
+    if not (wing_id or "").strip():
+        return (f"'{name}' 상점의 **WING 아이디가 등록되어 있지 않습니다.** 쿠팡이 답변자(WING ID)를 "
+                "필수로 요구합니다(업체코드로는 안 됩니다). 설정 → 쇼핑몰 계정에서 '{name}'의 "
+                "WING 아이디(wing.coupang.com 로그인 아이디)를 입력한 뒤 다시 보내주세요.").replace("{name}", name)
+    return (f"'{name}' 상점의 **WING 아이디가 맞지 않습니다** (현재: {wing_id}). "
+            "설정 → 쇼핑몰 계정에서 wing.coupang.com 로그인 아이디를 정확히 다시 입력해주세요.")
 
 
 def _is_reply_by_error(message: str) -> bool:
