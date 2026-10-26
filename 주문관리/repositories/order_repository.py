@@ -383,14 +383,17 @@ def get_cs_memo_map() -> dict:
 def update_cs_memo(order_id: int, memo: str) -> None:
     """사용자가 직접 적은 CS메모(고객 특이사항)를 저장합니다. 메모 저장 시각(cs_memo_updated_at)도
     함께 기록해, CS메모관리 화면에서 '메모 작성일'로 보여주고 기간으로 걸러볼 수 있게 합니다.
-    (메모를 지우면 작성일도 비웁니다.)"""
+    (메모를 지우면 작성일도 비웁니다.)
+    ★메모를 저장하면 '처리완료'(초록)를 해제해 다시 '미처리'(빨강)로 돌립니다 —
+      메모를 다시 적었다는 건 또 손봐야 한다는 뜻이라, 완료 표시를 초기화합니다."""
     now = _now()
     memo_at = now if (memo or "").strip() else None
     connection = get_connection()
     try:
         connection.execute(
-            "UPDATE orders SET cs_memo = ?, cs_memo_updated_at = ?, last_updated_at = ? WHERE id = ?",
-            (memo, memo_at, now, order_id),
+            "UPDATE orders SET cs_memo = ?, cs_memo_updated_at = ?, cs_memo_done = ?, "
+            "last_updated_at = ? WHERE id = ?",
+            (memo, memo_at, 0, now, order_id),
         )
         connection.commit()
     finally:
