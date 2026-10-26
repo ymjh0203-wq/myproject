@@ -198,7 +198,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
 
     # ★중복 주문번호 감지: 같은 주문번호(없으면 GR)가 시트에 2건 이상이면 그 행들은
     #   채우지 않고 '비고'에 사유만 적습니다(어느 게 진짜인지 사람이 판단하도록).
-    from collections import Counter
+    from collections import Counter, defaultdict
     dup_counts = Counter()
     for r in data_rows:
         k = str(ws.cell(r, col_order).value or "").strip() if col_order else ""
@@ -206,6 +206,22 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
             k = str(ws.cell(r, col_gr).value or "").strip()
         if k:
             dup_counts[k] += 1
+
+    # ★동명이인 감지: 같은 '고객성함'이 시트에 둘 이상인데 전화번호가 서로 다르면(= 다른 사람)
+    #   잘못 매칭될 위험이 있어 그 행들은 건너뜁니다. (같은 이름+같은 전화 = 같은 사람 2건은 건너뛰지 않음)
+    homonym_names = set()
+    if col_name:
+        name_phones = defaultdict(set)
+        for r in data_rows:
+            nm = str(ws.cell(r, col_name).value or "").strip()
+            if not nm:
+                continue
+            ph = ledger_match.digits(ws.cell(r, col_phone).value) if col_phone else ""
+            name_phones[nm].add(ph)  # 전화 숫자(없으면 '')
+        for nm, phones in name_phones.items():
+            # 서로 다른 전화가 2가지 이상(빈 전화 포함) → 같은 이름 다른 사람/불확실 → 건너뜀
+            if len(phones) >= 2:
+                homonym_names.add(nm)
 
     # ★수취인 대조용: 앱 DB에서 주문번호 → 수취인명·전화를 미리 한 번에 불러옵니다.
     recv_map = {}
@@ -219,7 +235,7 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
     gr_cache = {}
     stats = {"rows": 0, "filled_price": 0, "filled_ship": 0,
              "no_gr": 0, "not_in_db": 0, "err": 0, "suspect": 0, "skipped": 0,
-             "mismatch": 0, "dup": 0, "qty_skip": 0}
+             "mismatch": 0, "dup": 0, "qty_skip": 0, "homonym": 0}
     notes = []
 
     for idx, r in enumerate(data_rows):
@@ -267,6 +283,22 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
             _qc.value = _qnote
             _match_cell_style(_qc, ws.cell(r, _ref_col))
             notes.append((label, _qnote))
+            if progress:
+                try:
+                    progress(idx + 1, len(data_rows))
+                except Exception:  # noqa: BLE001
+                    pass
+            continue
+
+        # ★동명이인 행: 같은 이름이 둘 이상(전화 다름)이면 잘못 매칭 위험 → 건너뜁니다.
+        _rowname = str(ws.cell(r, col_name).value or "").strip() if col_name else ""
+        if _rowname and _rowname in homonym_names:
+            stats["homonym"] += 1
+            _hnote = f"동명이인('{_rowname}' 2명 이상, 전화 다름) — 건너뜀"
+            _hc = ws.cell(r, col_note)
+            _hc.value = _hnote
+            _match_cell_style(_hc, ws.cell(r, _ref_col))
+            notes.append((label, _hnote))
             if progress:
                 try:
                     progress(idx + 1, len(data_rows))

@@ -104,7 +104,8 @@ def _render_upload_fill() -> None:
                 st.success(
                     f"[{res['sheet']}] 시트 — 원가 {s['filled_price']}건 · 배송비 {s['filled_ship']}건 채움 "
                     f"(처리 {s['rows']}행{_rng}). 수량 2개↑ 건너뜀 {s.get('qty_skip', 0)} · "
-                    f"중복 주문번호로 건너뜀 {s.get('dup', 0)} · 수취인 불일치로 건너뜀 {s.get('mismatch', 0)} · "
+                    f"동명이인 건너뜀 {s.get('homonym', 0)} · 중복 주문번호로 건너뜀 {s.get('dup', 0)} · "
+                    f"수취인 불일치로 건너뜀 {s.get('mismatch', 0)} · "
                     f"GR없음 {s['no_gr']} · 앱에없음 {s['not_in_db']} · 의심 {s['suspect']} · 오류 {s['err']}"
                 )
                 # 채운 파일 세션에 보관 → 아래 다운로드 버튼(새로고침돼도 유지)
