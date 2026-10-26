@@ -75,10 +75,10 @@ if not defined CHROME if exist "%LOCALAPPDATA%\Google\Chrome\Application\chrome.
 set EDGE="%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
 
 if defined CHROME (
-    start "" %CHROME% --app=http://localhost:8501 --user-data-dir="%LOCALAPPDATA%\OrderManagementApp_Chrome" --window-size=1600,950
+    start "" %CHROME% --app=http://localhost:8501 --lang=ko-KR --user-data-dir="%LOCALAPPDATA%\OrderManagementApp_Chrome" --window-size=1600,950
 ) else if exist %EDGE% (
     echo Chrome not found. Opening in an Edge app window instead.
-    start "" %EDGE% --app=http://localhost:8501 --user-data-dir="%LOCALAPPDATA%\OrderManagementApp" --window-size=1600,950
+    start "" %EDGE% --app=http://localhost:8501 --lang=ko-KR --user-data-dir="%LOCALAPPDATA%\OrderManagementApp" --window-size=1600,950
 ) else (
     echo Could not find Chrome or Edge. Opening in the default browser instead.
     start "" http://localhost:8501

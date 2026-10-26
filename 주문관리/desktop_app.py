@@ -78,6 +78,9 @@ def _set_app_user_model_id() -> None:
 def main() -> None:
     os.chdir(BASE_DIR)
     _set_app_user_model_id()
+    # ★창(WebView2)의 언어를 한국어로 → 달력(날짜 선택기)의 월·요일이 '9월·10월'처럼 한국어로 나옵니다.
+    #   (Streamlit 날짜 선택기는 브라우저 언어를 따라가는데, 옵션이 없어 창 로케일로 맞춥니다.)
+    os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--lang=ko-KR")
     import webview  # pywebview
 
     proc = None
