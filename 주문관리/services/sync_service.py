@@ -1064,14 +1064,29 @@ def register_invoice_and_move_to_shipping(
     return result
 
 
+def _is_already_registered_invoice_error(message: str) -> bool:
+    """'이미 저장된 송장번호가 있어 등록이 불가능' 류 오류인지 판별.
+    (이미 그 송장이 쿠팡에 등록돼 있다는 뜻이라, 사실상 실패가 아니라 '이미 반영됨'입니다.)"""
+    text = (message or "")
+    return ("이미 저장된 송장" in text) or ("송장번호 등록이 불가능" in text) \
+        or ("already" in text.lower() and "invoice" in text.lower())
+
+
 def update_invoice_for_shipping(order: dict, delivery_company_code: str, invoice_number: str) -> dict:
     """이미 배송중인 주문의 송장(택배사+운송장번호)을 쿠팡에서 수정하고, 성공하면 우리 DB도 갱신합니다.
-    돌려주는 값: {"succeeded": bool, "message": str}"""
+    돌려주는 값: {"succeeded": bool, "message": str, "already": bool}
+    ★'이미 저장된 송장번호' 오류는 이미 등록된 상태라 실패가 아닌 '건너뜀(already)'으로 돌려줍니다."""
     client = _client_for_order(order)
     try:
         result = client.update_invoice(order, delivery_company_code, invoice_number)
     except CoupangApiError as error:
-        return {"succeeded": False, "message": str(error)}
+        msg = str(error)
+        if _is_already_registered_invoice_error(msg):
+            # 이미 그 송장이 등록돼 있음 → 로컬도 그 값으로 맞춰두고 '건너뜀'으로 처리.
+            order_repository.update_shipping_invoice(order["id"], delivery_company_code, invoice_number)
+            return {"succeeded": False, "already": True,
+                    "message": "이미 송장이 등록되어 있어 변경을 건너뜀"}
+        return {"succeeded": False, "message": msg}
 
     if result["succeeded"]:
         order_repository.update_shipping_invoice(order["id"], delivery_company_code, invoice_number)

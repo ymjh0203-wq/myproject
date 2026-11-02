@@ -97,13 +97,16 @@ def _invoice_change_dialog(key: str = "shipping") -> None:
     with c_apply:
         if st.button(f"✏️ {len(pending)}건 일괄 송장 변경 (쿠팡 실제 반영)",
                      type="primary", width="stretch", key=f"{key}_bulk_invoice_edit"):
-            done_ids, fails = [], []
+            done_ids, skipped_ids, fails = [], [], []
             bar = st.progress(0.0)
             for i, (o, code, inv, _cn) in enumerate(pending):
                 try:
                     res = sync_service.update_invoice_for_shipping(o, code, inv)
                     if res.get("succeeded"):
                         done_ids.append(str(o["market_order_id"]))
+                    elif res.get("already"):
+                        # 이미 송장이 등록된 건 → 실패 아님. 건너뛰고 대기목록에서도 제거.
+                        skipped_ids.append(str(o["market_order_id"]))
                     else:
                         fails.append(f"{o['market_order_id']}: {res.get('message')}")
                 except Exception as e:  # noqa: BLE001
@@ -112,11 +115,15 @@ def _invoice_change_dialog(key: str = "shipping") -> None:
             bar.empty()
             if done_ids:
                 st.success(f"{len(done_ids)}건 송장 변경 완료")
+            if skipped_ids:
+                st.info(f"{len(skipped_ids)}건은 이미 송장이 등록되어 있어 건너뛰었습니다. (실패 아님)")
             if fails:
                 st.error("일부 실패:\n" + "\n".join(f"- {x}" for x in fails[:12]))
+            # 완료 + 건너뜀(이미 등록) 둘 다 대기목록에서 제거(다시 안 뜨게).
+            _remove = set(done_ids) | set(skipped_ids)
             _records = st.session_state.get(f"{key}_edited_records", []) or []
             st.session_state[f"{key}_edited_records"] = [
-                r for r in _records if str(r.get("주문번호")) not in set(done_ids)
+                r for r in _records if str(r.get("주문번호")) not in _remove
             ]
             if done_ids and not fails:
                 st.rerun()
@@ -371,7 +378,8 @@ def _render_invoice_change_scan(gr_orders: list, all_orders: list) -> None:
                     else:
                         try:
                             r = sync_service.update_invoice_for_shipping(order, c["courier_code"], c["new"])
-                            if r.get("succeeded"):
+                            if r.get("succeeded") or r.get("already"):
+                                # '이미 등록됨'도 사실상 반영된 것이라 성공으로 셉니다.
                                 ok += 1
                             else:
                                 fail += 1
