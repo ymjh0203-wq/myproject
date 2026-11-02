@@ -102,7 +102,7 @@ def render_template(template_key: str, order: dict) -> str:
     product_name = (items[0]["product_name"] if items else "") or ""
 
     values = {
-        "상품명": product_name[:5],
+        "상품명": product_name,  # 전체 상품명(자르지 않음)
         "고객명": shipping.get("receiver_name") or "",
         "주문번호": order["market_order_id"] or "",
         "전화번호": shipping.get("customs_phone") or shipping.get("receiver_phone_raw") or "",
