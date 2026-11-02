@@ -157,8 +157,9 @@ def _sync_everything() -> None:
         ("반품요청", lambda: claims_sync_service.sync_claims("RETURN", *PB("RETURN"))),
         ("교환요청", lambda: claims_sync_service.sync_exchange_requests(*P("exchange"))),
         ("상품문의", lambda: claims_sync_service.sync_product_inquiries(*P("cs_inq"))),
-        # 사라진 주문 정리는 넓히면 아주 느립니다(실측 30일 218초). 탭 기간만 사용.
-        ("사라진 주문 정리", lambda: sync_service.reconcile_active_orders(*P("new_orders"))),
+        # ※ '사라진 주문 정리'(reconcile_active_orders)는 아주 느려(실측 30일 218초) 전체
+        #   새로고침에서는 뺐습니다. 취소된 주문은 신규주문/발송대기 탭 수집·앱 시작·주문확인
+        #   때 정리되므로 큰 지장 없습니다. (속도 우선 — 사용자 선택 B)
     ]
 
     # 콜센터문의는 쿠팡 API가 계속 500 오류를 내서 기본으로 꺼져 있습니다.
