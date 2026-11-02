@@ -104,6 +104,18 @@ def main() -> None:
     # 보강: 페이지가 로드될 때마다 '텍스트 선택 허용' CSS를 강제로 넣습니다.
     _SELECT_CSS = ("*{-webkit-user-select:text !important;"
                    "-ms-user-select:text !important;user-select:text !important;}")
+    # ★Ctrl+C 복사 보강: pywebview 창이 복사 단축키를 안 받아줄 때가 있어, 선택영역을
+    #   직접 클립보드로 복사하는 키 핸들러를 넣습니다. (Ctrl+C / Ctrl+X 모두)
+    _COPY_JS = (
+        "(function(){if(window.__omCopyHooked)return;window.__omCopyHooked=true;"
+        "document.addEventListener('keydown',function(e){"
+        "var k=(e.key||'').toLowerCase();"
+        "if((e.ctrlKey||e.metaKey)&&(k==='c'||k==='x')){"
+        "var s=window.getSelection();var t=s?s.toString():'';"
+        "if(t){try{document.execCommand('copy');}catch(_){}"
+        "try{if(navigator.clipboard)navigator.clipboard.writeText(t);}catch(_){}}}"
+        "},true);})();"
+    )
 
     def _enable_text_select():
         try:
@@ -117,6 +129,10 @@ def main() -> None:
                 )
             except Exception:
                 pass
+        try:
+            window.evaluate_js(_COPY_JS)  # Ctrl+C 복사 핸들러 주입
+        except Exception:
+            pass
 
     try:
         window.events.loaded += _enable_text_select
