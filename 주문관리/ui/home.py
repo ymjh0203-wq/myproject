@@ -150,13 +150,15 @@ def _sync_everything() -> None:
         ("신규주문", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_NEW, *PB("new_orders"))),
         ("발송대기", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_READY_TO_SHIP, *PB("rts"))),
         ("배송중", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_SHIPPING, *PB("shipping"))),
-        ("배송완료", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_DELIVERED, *PB("delivered"))),
+        # 배송완료는 넓히면 아주 느립니다(실측 30일 144초). 배송완료 상태 최신화는 아래 정리단계
+        # (배송완료 전진 120일·반품/환불 정리)가 넓게 처리하므로, 여기선 탭 기간만 수집합니다.
+        ("배송완료", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_DELIVERED, *P("delivered"))),
         ("취소요청", lambda: claims_sync_service.sync_claims("CANCEL", *PB("CANCEL"))),
         ("반품요청", lambda: claims_sync_service.sync_claims("RETURN", *PB("RETURN"))),
         ("교환요청", lambda: claims_sync_service.sync_exchange_requests(*P("exchange"))),
         ("상품문의", lambda: claims_sync_service.sync_product_inquiries(*P("cs_inq"))),
-        # 취소·반품 등으로 쿠팡에서 사라진 발송대기/신규 주문을 정리합니다.(넓힌 기간으로 확실히)
-        ("사라진 주문 정리", lambda: sync_service.reconcile_active_orders(*PB("new_orders"))),
+        # 사라진 주문 정리는 넓히면 아주 느립니다(실측 30일 218초). 탭 기간만 사용.
+        ("사라진 주문 정리", lambda: sync_service.reconcile_active_orders(*P("new_orders"))),
     ]
 
     # 콜센터문의는 쿠팡 API가 계속 500 오류를 내서 기본으로 꺼져 있습니다.
