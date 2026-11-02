@@ -115,6 +115,14 @@ def _maybe_advance_work_status(order_id: int, current_status: str, target_status
         if target_status in (models.WORK_STATUS_DELIVERED, models.WORK_STATUS_PURCHASE_CONFIRMED) \
                 and order_repository.order_has_completed_refund(order_id):
             return
+        # ★진행중 반품(반품접수)이 있는 주문은 '신규/발송대기/배송중'으로 되살리지 않습니다.
+        #   반품신청하면 배송 흐름에서 빠져야 하는데, 쿠팡이 배송중(DEPARTURE)을 유지하는
+        #   경우가 있어 수집 때 되살아나 주문종료와 왕복하던 문제. 반품이 철회(→완료 처리)되면
+        #   더는 진행중이 아니라 다음 수집에서 정상 복귀합니다(자동 회복). 실측 임동주 건.
+        if target_status in (models.WORK_STATUS_NEW, models.WORK_STATUS_READY_TO_SHIP,
+                             models.WORK_STATUS_SHIPPING) \
+                and order_repository.order_has_active_return(order_id):
+            return
         order_repository.update_work_status(order_id, target_status, changed_by="auto-revive")
         return
     try:
@@ -629,6 +637,17 @@ def close_returned_active_orders() -> dict:
         "kept_count": kept,
         "error_message": (f"{errors}건 조회불가(그대로 둠)" if errors else None),
     }
+
+
+def close_return_requested_active_orders() -> dict:
+    """활성(신규/발송대기/배송중) 주문 중 '진행중 반품(반품접수)'이 있는 건을 주문종료로 정리합니다.
+    (반품신청하면 배송 흐름에서 빼고 반품주문에서만 보이게 — 쿠팡이 배송중 유지해도 뺌)
+    반환: {status, closed_count, error_message}"""
+    try:
+        n = order_repository.close_active_orders_with_pending_return()
+        return {"status": "success", "closed_count": n, "error_message": None}
+    except Exception as error:  # noqa: BLE001
+        return {"status": "fail", "closed_count": 0, "error_message": str(error)}
 
 
 def close_refunded_final_orders() -> dict:

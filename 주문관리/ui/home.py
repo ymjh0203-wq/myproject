@@ -196,6 +196,7 @@ def _sync_everything() -> None:
     cleanup_jobs = [
         ("배송완료 전진", lambda: sync_service.advance_delivered_orders()),
         ("활성 완료반품 정리", lambda: sync_service.close_returned_active_orders()),
+        ("반품신청 배송중 정리", lambda: sync_service.close_return_requested_active_orders()),
         ("정산→구매확정", lambda: sync_service.advance_settled_orders(recognition_days=20)),
         ("배송완료→구매확정(30일)", lambda: sync_service.advance_confirmed_orders()),
         ("배송완료 반품 정리", lambda: sync_service.reconcile_returned_final_orders()),

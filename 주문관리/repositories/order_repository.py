@@ -1301,6 +1301,58 @@ def list_final_orders_with_claims() -> list:
         connection.close()
 
 
+def order_has_active_return(order_id: int) -> bool:
+    """이 주문(id)에 '진행중 반품'(RETURN 클레임이 아직 완료 아님 = 반품접수)이 있는지.
+    → 반품신청(접수)된 배송중/발송대기 주문을 수집 때 다시 배송 흐름으로 되살리지 않게 할 때 씁니다."""
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT 1 FROM claims
+            WHERE claim_type = 'RETURN' AND receipt_status <> 'RETURNS_COMPLETED'
+              AND market_order_id = (SELECT market_order_id FROM orders WHERE id = ?)
+            LIMIT 1
+            """,
+            (order_id,),
+        ).fetchone()
+        return bool(row)
+    finally:
+        connection.close()
+
+
+def close_active_orders_with_pending_return() -> int:
+    """활성(신규주문/발송대기/배송중) 주문 중 '진행중 반품(반품접수, RETURNS_UNCHECKED 등)'이
+    있는 건을 '주문종료'로 정리합니다. 반품신청이 들어오면 배송 흐름(신규/발송대기/배송중)에서
+    빼고 반품주문에서만 보이게 합니다. (쿠팡이 배송중을 유지해도 반품신청이면 뺍니다 — 사용자 요청)
+    ★완료된 반품(RETURNS_COMPLETED)은 여기서 다루지 않습니다(그건 다른 정리가 담당).
+    정리한 건수를 돌려줍니다."""
+    active = (
+        models.WORK_STATUS_NEW,
+        models.WORK_STATUS_READY_TO_SHIP,
+        models.WORK_STATUS_SHIPPING,
+    )
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT orders.id
+            FROM orders
+            JOIN claims ON claims.market_order_id = orders.market_order_id
+            WHERE orders.work_status IN ({",".join("?" for _ in active)})
+              AND claims.claim_type = 'RETURN'
+              AND claims.receipt_status <> 'RETURNS_COMPLETED'
+            """,
+            active,
+        ).fetchall()
+        order_ids = [r["id"] for r in rows]
+    finally:
+        connection.close()
+
+    for order_id in order_ids:
+        update_work_status(order_id, models.WORK_STATUS_CLOSED, changed_by="auto-close-return-requested")
+    return len(order_ids)
+
+
 def order_has_completed_refund(order_id: int) -> bool:
     """이 주문(id)에 '환불완료(RETURNS_COMPLETED)' 반품 클레임이 있는지. (되살림 가드용)
     → 환불완료된 배송완료/구매확정 건을 수집 때 다시 배송완료로 되살리지 않게 할 때 씁니다."""

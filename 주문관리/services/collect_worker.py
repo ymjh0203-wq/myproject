@@ -160,6 +160,8 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                     errors.append(rc["error_message"])
                 # 반품·취소 완료됐는데 아직 활성(배송중 등)으로 남은 주문 정리(데이터 불일치 방지).
                 closed_c += sync_service.close_returned_active_orders().get("closed_count", 0) or 0
+                # 반품신청(진행중)된 활성 주문도 주문종료로 정리.
+                closed_c += sync_service.close_return_requested_active_orders().get("closed_count", 0) or 0
             except Exception as error:  # noqa: BLE001
                 errors.append(str(error))
             done += 1
@@ -175,6 +177,8 @@ def _run(key: str, stages: list, period_from, period_to, reconcile: bool,
                     errors.append(ad["error_message"])
                 # 배송중 수집 때도 '반품·취소 완료된 배송중 주문'을 함께 정리합니다.
                 closed_c += sync_service.close_returned_active_orders().get("closed_count", 0) or 0
+                # ★반품신청(진행중)된 배송중 주문도 주문종료로 빼냅니다(쿠팡이 배송중 유지해도).
+                closed_c += sync_service.close_return_requested_active_orders().get("closed_count", 0) or 0
                 # 쿠팡 정산에 뜬 완료 주문(업체직송 등 주문서에 안 나오는 것 포함) → 구매확정 전진.
                 advanced_c += sync_service.advance_settled_orders(recognition_days=20).get("advanced_count", 0) or 0
             except Exception as error:  # noqa: BLE001
