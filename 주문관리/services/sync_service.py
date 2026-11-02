@@ -836,17 +836,28 @@ def sync_settlement_amounts(period_from, period_to) -> dict:
     매출인식일(구매확정 또는 배송완료 3일 후) 기준이라, 배송완료·구매확정된 주문에만 값이 옵니다.
     반환: {"status", "fetched": 조회된 주문 수, "updated": DB 반영 행 수, "error_message"}
     """
+    # 쿠팡 매출내역(정산) 조회는 '한 번에 1개월 미만'만 허용 → 30일 이하로 쪼개서 조회합니다.
+    def _chunks(start, end, max_days=30):
+        out = []
+        cur = start
+        while cur <= end:
+            ce = min(cur + timedelta(days=max_days - 1), end)
+            out.append((cur, ce))
+            cur = ce + timedelta(days=1)
+        return out
+
     mapping = {}
     errors = []
     for account in coupang_accounts():
         client = _client_for_account(account)
-        try:
-            data = client.fetch_revenue_history(period_from, period_to)
-        except Exception as error:  # noqa: BLE001
-            errors.append(f"[{account.get('market_name')}] {error}")
-            continue
-        for market_order_id, info in data.items():
-            mapping[market_order_id] = info.get("settlement_amount")
+        for _cf, _ct in _chunks(period_from, period_to):
+            try:
+                data = client.fetch_revenue_history(_cf, _ct)
+            except Exception as error:  # noqa: BLE001
+                errors.append(f"[{account.get('market_name')}] {error}")
+                continue
+            for market_order_id, info in data.items():
+                mapping[market_order_id] = info.get("settlement_amount")
 
     updated = order_repository.bulk_update_settlement_amount(mapping)
     return {

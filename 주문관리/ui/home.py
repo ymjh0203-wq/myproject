@@ -201,6 +201,9 @@ def _sync_everything() -> None:
         ("배송완료→구매확정(30일)", lambda: sync_service.advance_confirmed_orders()),
         ("배송완료 반품 정리", lambda: sync_service.reconcile_returned_final_orders()),
         ("환불완료 정리", lambda: sync_service.close_refunded_final_orders()),
+        # 쿠팡 실제 정산금액(최근 40일 매출내역)까지 한 번에 — 매출/마진이 실값으로 맞춰집니다.
+        ("실제 정산금액", lambda: sync_service.sync_settlement_amounts(
+            date.today() - timedelta(days=40), date.today())),
     ]
     cleanup_progress = [(lbl, (lambda j=job: _run(j))) for lbl, job in cleanup_jobs]
     cleanup_results = common.run_jobs_with_progress(
