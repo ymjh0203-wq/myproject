@@ -139,17 +139,24 @@ def _sync_everything() -> None:
     def P(prefix):
         return _tab_period(prefix)
 
+    def PB(prefix):
+        """전체 새로고침 전용 '넓힌 기간' — 탭 기간이 짧아도 최소 30일은 보장해, 배송중·발송대기·
+        배송완료·반품이 확실히 최신화되게 합니다. (주문서·반품 조회는 긴 기간/자동분할로 안전)"""
+        pf, pt = _tab_period(prefix)
+        broad_from = date.today() - timedelta(days=30)
+        return (min(pf, broad_from), max(pt, date.today()))
+
     jobs = [
-        ("신규주문", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_NEW, *P("new_orders"))),
-        ("발송대기", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_READY_TO_SHIP, *P("rts"))),
-        ("배송중", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_SHIPPING, *P("shipping"))),
-        ("배송완료", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_DELIVERED, *P("delivered"))),
-        ("취소요청", lambda: claims_sync_service.sync_claims("CANCEL", *P("CANCEL"))),
-        ("반품요청", lambda: claims_sync_service.sync_claims("RETURN", *P("RETURN"))),
+        ("신규주문", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_NEW, *PB("new_orders"))),
+        ("발송대기", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_READY_TO_SHIP, *PB("rts"))),
+        ("배송중", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_SHIPPING, *PB("shipping"))),
+        ("배송완료", lambda: sync_service.sync_orders_for_stage(models.WORK_STATUS_DELIVERED, *PB("delivered"))),
+        ("취소요청", lambda: claims_sync_service.sync_claims("CANCEL", *PB("CANCEL"))),
+        ("반품요청", lambda: claims_sync_service.sync_claims("RETURN", *PB("RETURN"))),
         ("교환요청", lambda: claims_sync_service.sync_exchange_requests(*P("exchange"))),
         ("상품문의", lambda: claims_sync_service.sync_product_inquiries(*P("cs_inq"))),
-        # 취소·반품 등으로 쿠팡에서 사라진 발송대기/신규 주문을 정리합니다.(신규주문 기간 사용)
-        ("사라진 주문 정리", lambda: sync_service.reconcile_active_orders(*P("new_orders"))),
+        # 취소·반품 등으로 쿠팡에서 사라진 발송대기/신규 주문을 정리합니다.(넓힌 기간으로 확실히)
+        ("사라진 주문 정리", lambda: sync_service.reconcile_active_orders(*PB("new_orders"))),
     ]
 
     # 콜센터문의는 쿠팡 API가 계속 500 오류를 내서 기본으로 꺼져 있습니다.
