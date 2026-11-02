@@ -456,12 +456,16 @@ def advance_delivered_orders(progress=None) -> dict:
     # 2) 계정 조회(쿠팡 API 대기)는 '동시에' — 순차 합산 대신 가장 느린 계정으로 수렴.
     #    배송지시·배송중·배송완료·업체직송(무추적)을 함께 조회해 각 주문의 '현재 쿠팡 상태'를 확보.
     #    NONE_TRACKING은 택배 추적이 없어 FINAL_DELIVERY 스캔이 안 와서 배송중에 갇히던 문제 때문.
+    # ★속도 핵심: 배송완료(FINAL_DELIVERY) '전체'를 긁지 않습니다(수천 건 → 수백 초).
+    #   아직 배송 중인 '배송지시(DEPARTURE)·배송중(DELIVERING)'만 조회(건수 적음)하고,
+    #   그 목록에 '없는' 배송중 주문만 건별로 쿠팡에 물어봐(probe) 배송완료/취소를 판정합니다.
+    #   (우리 배송중 주문 대부분은 아직 DEPARTURE라 probe 대상은 소수 → 385초 → 수십 초)
     def _fetch_live(job):
         account, _shipping, fetch_from = job
         try:
             live = _fetch_statuses_with_retry(
                 _client_for_account(account),
-                ["DEPARTURE", "DELIVERING", "FINAL_DELIVERY", "NONE_TRACKING"], fetch_from, fetch_to)
+                ["DEPARTURE", "DELIVERING"], fetch_from, fetch_to)
             return job, live, None
         except CoupangApiError as error:
             return job, None, error
@@ -474,6 +478,7 @@ def advance_delivered_orders(progress=None) -> dict:
         fetched = [_fetch_live(j) for j in jobs]
 
     # 3) 처리(DB 쓰기)는 순차 — 커넥션 풀 경합 방지.
+    clients = {}
     for acc_i, (job, live, fetch_error) in enumerate(fetched):
         account, shipping, fetch_from = job
         if fetch_error is not None:
@@ -481,37 +486,47 @@ def advance_delivered_orders(progress=None) -> dict:
             errors.append(f"[{account['market_name']}] {fetch_error}")
             continue
 
-        status_by_box = {str(o["shipment_box_id"]): (o.get("market_status") or "").upper()
-                         for o in live}
+        in_transit = {str(o["shipment_box_id"]): (o.get("market_status") or "").upper()
+                      for o in live}
+        absent = []  # 배송지시/배송중 목록에 없는 배송중 주문 → 전환됨(배송완료/취소) → 건별 확인
         for order in shipping:
-            live_status = status_by_box.get(str(order["shipment_box_id"]))
-            if not live_status:
-                # 쿠팡 배송(활성) 목록 어디에도 없음.
-                #  ★조회 범위(120일) 안이면: 취소·반품으로 쿠팡이 배송에서 뺀 것 → 주문종료로 정리.
-                #    (쿠팡 실측 2026-09: 배송지시(DEPARTURE) 주문이 반품접수되면 어느 배송상태
-                #     조회에도 안 나오고, 단건조회는 "취소 또는 반품 되었습니다"를 냅니다.
-                #     ↔ 배송완료(FINAL_DELIVERY)는 반품돼도 유지되므로 그건 배송완료에 그대로 둡니다.)
-                #    이후 고객이 반품접수를 철회하면 쿠팡이 다시 DEPARTURE로 돌려주고,
-                #    다음 수집 때 _maybe_advance_work_status가 배송중으로 되살립니다.
-                #  ★조회 범위보다 오래된 주문은 '사라졌다' 오판 방지로 건드리지 않습니다.
+            st = in_transit.get(str(order["shipment_box_id"]))
+            if st in ("DEPARTURE", "DELIVERING"):
+                # 아직 배송 중: 원본상태를 쿠팡 실제값으로 최신화.
+                if order_repository.set_market_status(order["id"], st):
+                    total_substatus += 1
+            else:
+                absent.append(order)
+
+        if not absent:
+            continue
+        client = clients.get(account["id"])
+        if client is None:
+            client = clients[account["id"]] = _client_for_account(account)
+        for order in absent:
+            try:
+                kind, detail = client.probe_order_state(order["market_order_id"])
+            except Exception:  # noqa: BLE001
+                kind, detail = "error", None
+            dup = (detail or "").upper()
+            if kind == "status" and dup in ("FINAL_DELIVERY", "NONE_TRACKING"):
+                # 배송완료(또는 업체직송 무추적) → 배송완료로 전진.
+                if delivered_rank > order_rank.get(order["work_status"], -1):
+                    order_repository.update_work_status(
+                        order["id"], models.WORK_STATUS_DELIVERED, changed_by="auto-advance")
+                    total_advanced += 1
+            elif kind == "status":
+                # 아직 다른 배송상태 → 원본상태 갱신.
+                if dup and order_repository.set_market_status(order["id"], dup):
+                    total_substatus += 1
+            elif kind == "removed":
+                # 취소·반품으로 쿠팡이 배송에서 뺀 것 → 조회범위 안이면 주문종료로 정리.
                 od = _order_date(order)
                 if od is not None and od >= fetch_from:
                     order_repository.update_work_status(
-                        order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile-shipping"
-                    )
+                        order["id"], models.WORK_STATUS_CLOSED, changed_by="auto-reconcile-shipping")
                     total_closed += 1
-                continue
-            # FINAL_DELIVERY(배송완료)·NONE_TRACKING(업체직송/직접배송·무추적) → 배송완료로 전진.
-            if live_status in ("FINAL_DELIVERY", "NONE_TRACKING"):
-                if delivered_rank > order_rank.get(order["work_status"], -1):
-                    order_repository.update_work_status(
-                        order["id"], models.WORK_STATUS_DELIVERED, changed_by="auto-advance"
-                    )
-                    total_advanced += 1
-            else:
-                # 아직 배송중: 배송지시/배송중 원본상태를 쿠팡 실제값으로 최신화.
-                if order_repository.set_market_status(order["id"], live_status):
-                    total_substatus += 1
+            # error → 건드리지 않음
 
         if progress:
             try:
