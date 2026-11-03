@@ -167,13 +167,15 @@ def _pg_connect() -> "_PostgresConnection":
             last_error = error
             time.sleep(0.25)
         except psycopg2.OperationalError as error:
-            # Supabase 세션 한도 초과(EMAXCONNSESSION) → 잠깐 뒤 재시도. 다른 오류는 바로 올림.
-            msg = str(error)
-            if "EMAXCONNSESSION" in msg or "max clients" in msg:
-                last_error = error
-                time.sleep(0.4)
-            else:
+            # 일시적 연결 오류는 재시도합니다: 세션 한도 초과(EMAXCONNSESSION), 서버가 연결을
+            # 끊음(무료 플랜이 쉬다 깨어나는 중 등), 타임아웃/일시 네트워크 등.
+            # 단, 인증·DB 없음 같은 '영구 오류'는 재시도해도 소용없어 바로 올립니다.
+            msg = str(error).lower()
+            permanent = any(k in msg for k in ("authentication", "password", "does not exist"))
+            if permanent:
                 raise
+            last_error = error
+            time.sleep(0.4)
     raise last_error
 
 
