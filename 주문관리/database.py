@@ -134,8 +134,11 @@ def _get_pg_pool():
             import psycopg2.pool
             # maxconn은 작게(무료 플랜 연결 수 한도). 1인 데스크톱 앱은 메인 + 수집/알람 스레드
             # 정도라 6이면 충분. 초과 요청 시 잠깐 기다렸다 재사용됩니다.
+            # ★Supabase 세션 풀러(5432)는 동시 연결을 작게 제한합니다(EMAXCONNSESSION,
+            #   이 프로젝트는 ~5). 그 한도를 넘기면 연결 자체가 실패하므로 maxconn=5로 맞춥니다.
+            #   순간적으로 모자라면 _pg_connect가 기다렸다 재시도합니다.
             _PG_POOL = psycopg2.pool.ThreadedConnectionPool(
-                1, 6,
+                1, 5,
                 dsn=config.DATABASE_URL,
                 cursor_factory=_get_hybrid_cursor(),
                 connect_timeout=15,
@@ -147,10 +150,31 @@ def _get_pg_pool():
 
 def _pg_connect() -> "_PostgresConnection":
     """Supabase PostgreSQL에 접속합니다(커넥션 풀에서 재사용).
-    결과 행은 컬럼명(row["col"])·위치(row[0]) 둘 다 됩니다. close()하면 풀로 반납됩니다."""
+    결과 행은 컬럼명(row["col"])·위치(row[0]) 둘 다 됩니다. close()하면 풀로 반납됩니다.
+    ★풀이 순간적으로 가득 차면(동시 작업 많을 때) 바로 에러 내지 않고, 잠깐 기다렸다
+      재시도합니다(다른 스레드가 연결을 반납할 시간을 줌). 그래도 안 되면 그때 에러."""
+    import time
+    import psycopg2
+    import psycopg2.pool
     pool = _get_pg_pool()
-    raw = pool.getconn()
-    return _PostgresConnection(raw, pool=pool)
+    last_error = None
+    for _attempt in range(25):  # 최대 약 6초 대기
+        try:
+            raw = pool.getconn()
+            return _PostgresConnection(raw, pool=pool)
+        except psycopg2.pool.PoolError as error:
+            # 풀이 가득 참(동시 작업 많음) → 다른 스레드가 반납할 시간을 주고 재시도.
+            last_error = error
+            time.sleep(0.25)
+        except psycopg2.OperationalError as error:
+            # Supabase 세션 한도 초과(EMAXCONNSESSION) → 잠깐 뒤 재시도. 다른 오류는 바로 올림.
+            msg = str(error)
+            if "EMAXCONNSESSION" in msg or "max clients" in msg:
+                last_error = error
+                time.sleep(0.4)
+            else:
+                raise
+    raise last_error
 
 
 def get_connection():
