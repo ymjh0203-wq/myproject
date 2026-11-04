@@ -134,11 +134,11 @@ def _get_pg_pool():
             import psycopg2.pool
             # maxconn은 작게(무료 플랜 연결 수 한도). 1인 데스크톱 앱은 메인 + 수집/알람 스레드
             # 정도라 6이면 충분. 초과 요청 시 잠깐 기다렸다 재사용됩니다.
-            # ★Supabase 세션 풀러(5432)는 동시 연결을 작게 제한합니다(EMAXCONNSESSION,
-            #   이 프로젝트는 ~5). 그 한도를 넘기면 연결 자체가 실패하므로 maxconn=5로 맞춥니다.
-            #   순간적으로 모자라면 _pg_connect가 기다렸다 재시도합니다.
+            # ★.env의 DATABASE_URL이 '트랜잭션 풀러(포트 6543)'면 동시연결 여유가 커서(수백)
+            #   maxconn을 넉넉히 둡니다. '세션 풀러(5432)'면 한도가 작아(EMAXCONNSESSION)
+            #   순간 초과 시 _pg_connect가 기다렸다 재시도합니다. 6543 권장.
             _PG_POOL = psycopg2.pool.ThreadedConnectionPool(
-                1, 5,
+                1, 10,
                 dsn=config.DATABASE_URL,
                 cursor_factory=_get_hybrid_cursor(),
                 connect_timeout=15,
