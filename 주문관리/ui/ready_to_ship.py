@@ -45,6 +45,14 @@ from services import customs_service, gr_backfill_service, privacy, quickstar_in
 from ui import common, settings
 
 
+def _bump_rts_grid() -> None:
+    """발송대기 표(AG-Grid)를 강제로 새로 그리게(remount) 합니다. AG-Grid는 key가 그대로면
+    데이터를 안 바꿔서, GR·가송장을 채우거나 지워도 '재검색해야 보이던' 문제가 있어서,
+    데이터를 바꾼 뒤 이 함수로 reset_nonce를 올려 표가 바로 갱신되게 합니다."""
+    st.session_state["aggrid_reset_nonce:rts"] = \
+        st.session_state.get("aggrid_reset_nonce:rts", 0) + 1
+
+
 @st.dialog("관세청 공식검증")
 def _confirm_official_check(orders: list) -> None:
     """
@@ -846,6 +854,7 @@ def render() -> None:
             else:
                 order_repository.backfill_quickstar_order_no(order["id"], _grc, None)
                 st.success(f"GR번호 저장 완료: {_grc} — 이제 위 '🔄 퀵스타 송장 자동입력'으로 가송장을 채울 수 있습니다.")
+                _bump_rts_grid()
                 st.rerun(scope="app")
         # GR을 잘못 넣었을 때 지우기(이 주문의 GR·가송장 비움).
         if (order.get("quickstar_order_no") or "").strip():
@@ -855,6 +864,7 @@ def render() -> None:
                 _moid = str(order["market_order_id"])
                 st.session_state["rts_edited_records"] = [r for r in _recs if str(r.get("주문번호")) != _moid]
                 st.success("이 주문의 GR을 지웠습니다. (가송장도 함께 비움) 다시 넣으실 수 있습니다.")
+                _bump_rts_grid()
                 st.rerun(scope="app")
         _render_sms_history(order)
         _render_sms_form(order, reveal)
@@ -925,6 +935,7 @@ def render() -> None:
                     _r for _r in _recs if str(_r.get("주문번호")) not in _cleared_moids
                 ]
                 st.success(f"🗑 {len(_cleared_moids)}건의 GR을 지웠습니다. (가송장도 함께 비움) 다시 넣으실 수 있습니다.")
+                _bump_rts_grid()
                 st.rerun(scope="app")
             else:
                 st.info("선택한 주문에 지울 GR이 없습니다.")
@@ -958,6 +969,7 @@ def render() -> None:
             _saved += 1
         if _saved:
             st.success(f"✅ {_saved}건의 GR번호를 저장했습니다. 이제 송장번호(가송장)가 채워집니다.")
+            _bump_rts_grid()
             st.rerun()
         elif _bad:
             st.warning(f"'GR'로 시작하지 않는 값 {_bad}건이 있어 저장 안 함. '퀵스타 신청번호' 칸에 GR번호(예: GR2608287582367)를 넣어주세요.")
@@ -994,6 +1006,7 @@ def render() -> None:
                 rec["택배사"] = common.courier_label(code)
                 by_moid[moid] = rec
             st.session_state["rts_edited_records"] = list(by_moid.values())
+            _bump_rts_grid()  # 채운 가송장이 바로 표에 보이게(재검색 불필요)
             st.success(
                 f"✅ {res['filled']}건 가송장 자동입력 완료 (택배사: CJ대한통운). "
                 f"표에서 확인한 뒤 **발송처리**를 누르면 쿠팡에 등록됩니다.  "
