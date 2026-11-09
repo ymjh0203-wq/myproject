@@ -1,1 +1,9 @@
 .venv/
+__pycache__/
+*.pyc
+catalog_match_poc/data/reports/
+catalog_match_poc/data/
+catalog_match_poc/outputs/
+catalog_match_poc/.tmp_registration/
+catalog_match_poc/.tmp-tests/
+catalog_match_poc/.test_tmp/

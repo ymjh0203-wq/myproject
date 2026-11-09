@@ -1,0 +1,30 @@
+{
+  "source_folder": "C:\\Users\\User\\Desktop\\해외구매대행\\상세페이지_번역\\output\\20260720_215137",
+  "source_image_count": 7,
+  "tested_images": [
+    "02.jpg",
+    "04.jpg",
+    "06.jpg"
+  ],
+  "page_decisions": {
+    "01.jpg": "제거 권장: 다른 판매자 고객센터가 포함된 중복 합본",
+    "02.jpg": "부분 유지: 제품 비교는 유지, 판매자 연락처·배송 안내 제거",
+    "03.jpg": "유지: 제품 디자인 설명, 일부 어색한 문구만 자연화",
+    "04.jpg": "교정: 기계번역 자연화, 숫자 97은 원문 확인 필요",
+    "05.jpg": "검수 필요: 전원 방식·220V 등 규격을 원문과 대조",
+    "06.jpg": "교정: 설치 순서를 자연스러운 한국어로 재작성",
+    "07.jpg": "검수 필요: 드릴·앵커 규격을 원문과 대조 후 재작성"
+  },
+  "outputs": {
+    "seller_cleanup": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\second_detail_page\\01_seller_cleanup.png",
+    "korean_naturalization": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\second_detail_page\\02_korean_naturalization.png",
+    "installation_rewrite": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\second_detail_page\\03_installation_rewrite.png"
+  },
+  "all_comparisons": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\second_detail_page\\04_all_comparisons.png",
+  "assessment": {
+    "seller_information_detection": "통과",
+    "awkward_korean_detection": "통과",
+    "numeric_spec_safeguard": "통과 — 97 수치를 자동 확정하지 않고 검수 표시",
+    "product_image_reuse": "통과 — 제품 사진 영역을 원본에서 재사용"
+  }
+}

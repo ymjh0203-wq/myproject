@@ -1,0 +1,45 @@
+{
+  "source": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\01_source_chinese.png",
+  "annotated": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\02_ocr_detected.png",
+  "translated": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\03_translated_korean.png",
+  "comparison": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\04_comparison.png",
+  "photo_source": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\05_photo_source_chinese.png",
+  "photo_translated": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\06_photo_translated_korean.png",
+  "photo_comparison": "C:\\Users\\User\\Desktop\\해외구매대행\\catalog_match_poc\\translation_quality_test\\07_photo_comparison.png",
+  "expected_chinese": [
+    "这个链接里面有好多款，头发有植入头发，也有手绘头发，",
+    "全胶身体，材质是混合硅胶，都是空心的。",
+    "具体哪一款？你发给我。",
+    "不同款式，结构不同。"
+  ],
+  "detected_lines": [
+    "款式与材质说明",
+    "这个链接里面有好多款，头发有植入头发，也有手绘头发，",
+    "全胶身体，材质是混合硅胶，都是空心的。",
+    "具体哪一款？你发给我。",
+    "不同款式，结构不同。",
+    "用于翻译质量测试的示例图"
+  ],
+  "body_detected_lines": [
+    "这个链接里面有好多款，头发有植入头发，也有手绘头发，",
+    "全胶身体，材质是混合硅胶，都是空心的。",
+    "具体哪一款？你发给我。",
+    "不同款式，结构不同。"
+  ],
+  "ocr_character_match_percent": 100.0,
+  "photo_detected_lines": [
+    "久保田收割机通用座椅",
+    "新款·含网兜"
+  ],
+  "photo_ocr_character_match_percent": 100.0,
+  "photo_pixels_preserved_outside_text_areas_percent": 100.0,
+  "natural_korean": [
+    "이 링크에는 여러 종류가 있습니다.",
+    "머리카락은 실제로 심은 식모형과",
+    "손으로 그린 페인팅형이 있습니다.",
+    "전신은 혼합 실리콘 소재의 속이 빈 구조입니다.",
+    "원하시는 모델의 사진을 보내 주세요.",
+    "모델마다 구조가 다릅니다."
+  ],
+  "note": "번역 문장은 현재 대화 모델로 자연화했고 이미지는 로컬에서 고정형으로 재합성함"
+}
