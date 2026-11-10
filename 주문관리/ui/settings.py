@@ -37,6 +37,17 @@ DEFAULT_COURIER_FALLBACK = "CJGLS"  # CJ대한통운
 CALL_CENTER_SYNC_SETTING_KEY = "collect_call_center_inquiries"
 CALL_CENTER_SYNC_DEFAULT = "on"
 
+# 주기 자동수집: 앱이 열려있는 동안 N분마다 '신규주문'을 백그라운드로 다시 수집합니다.
+# ★왜 필요한가: 쿠팡은 수취인명·실전화·개인통관부호 같은 개인정보를 '주문 직후 잠깐'만
+#   API로 주고(실측상 창이 하루 안팎) 그 뒤엔 빈 값으로 줍니다. 앱을 오래 꺼두면 그 창을
+#   놓쳐서 새 주문의 PII가 처음부터 비게 됩니다. 자주 수집하면 창이 열려있을 때 잡아둡니다.
+#   (한 번 받아둔 값은 order_repository의 COALESCE 가드로 이후 재수집에도 안 지워집니다.)
+AUTO_COLLECT_ENABLED_KEY = "auto_collect_enabled"        # "on"/"off", 기본 on
+AUTO_COLLECT_INTERVAL_KEY = "auto_collect_interval_min"   # 분
+AUTO_COLLECT_INTERVAL_DEFAULT = 60                        # 1시간 (창이 하루 안팎이라 넉넉)
+AUTO_COLLECT_INTERVAL_MIN = 10
+AUTO_COLLECT_INTERVAL_MAX = 360
+
 
 def get_default_courier_code() -> str:
     """송장 등록 화면에서 기본으로 선택해둘 택배사 코드를 돌려줍니다."""
@@ -48,6 +59,22 @@ def is_call_center_sync_enabled() -> bool:
     """콜센터문의를 수집할지 여부를 돌려줍니다. (기본: 수집 안 함)"""
     saved = settings_repository.get_setting(CALL_CENTER_SYNC_SETTING_KEY, CALL_CENTER_SYNC_DEFAULT)
     return saved == "on"
+
+
+def is_auto_collect_enabled() -> bool:
+    """앱이 열려있는 동안 주기적으로 신규주문을 자동수집할지 여부. (기본: 켜짐)"""
+    saved = settings_repository.get_setting(AUTO_COLLECT_ENABLED_KEY, "on")
+    return (saved or "on") != "off"
+
+
+def get_auto_collect_interval_min() -> int:
+    """자동수집 간격(분). 10~360분으로 보정. (기본 60분)"""
+    try:
+        v = int(settings_repository.get_setting(
+            AUTO_COLLECT_INTERVAL_KEY, str(AUTO_COLLECT_INTERVAL_DEFAULT)))
+    except (TypeError, ValueError):
+        v = AUTO_COLLECT_INTERVAL_DEFAULT
+    return max(AUTO_COLLECT_INTERVAL_MIN, min(AUTO_COLLECT_INTERVAL_MAX, v))
 
 
 def _mask_secret(value: str) -> str:
@@ -266,6 +293,37 @@ def _render_collection_settings() -> None:
             CALL_CENTER_SYNC_SETTING_KEY, "on" if enabled else "off"
         )
         st.success("수집 설정을 저장했습니다." if enabled else "콜센터문의 수집을 껐습니다.")
+        st.rerun()
+
+    st.markdown("---")
+    st.markdown("**신규주문 자동수집 (개인정보 보존용)**")
+    st.caption(
+        "쿠팡은 수취인명·실전화·개인통관부호 같은 개인정보를 **주문 직후 잠깐(하루 안팎)만** 주고 "
+        "이후엔 빈 값으로 줍니다. 앱을 켜둔 동안 자주 수집하면 그 창이 열려있을 때 받아둡니다. "
+        "(한 번 받아둔 값은 이후 재수집에도 안 지워집니다.)"
+    )
+    auto_on = st.checkbox(
+        "앱을 켜둔 동안 신규주문 자동수집",
+        value=is_auto_collect_enabled(),
+        key="settings_auto_collect_on",
+    )
+    auto_min = st.number_input(
+        "수집 간격(분)",
+        min_value=AUTO_COLLECT_INTERVAL_MIN,
+        max_value=AUTO_COLLECT_INTERVAL_MAX,
+        value=get_auto_collect_interval_min(),
+        step=10,
+        key="settings_auto_collect_min",
+        help="기본 60분(1시간). 쿠팡 개인정보 창이 하루 안팎이라 1시간이면 넉넉합니다.",
+        disabled=not auto_on,
+    )
+    if st.button("자동수집 설정 저장", key="settings_save_autocollect"):
+        settings_repository.set_setting(AUTO_COLLECT_ENABLED_KEY, "on" if auto_on else "off")
+        settings_repository.set_setting(AUTO_COLLECT_INTERVAL_KEY, str(int(auto_min)))
+        if auto_on:
+            st.success(f"{int(auto_min)}분마다 신규주문을 자동수집합니다. (앱을 켜두세요)")
+        else:
+            st.success("자동수집을 껐습니다.")
         st.rerun()
 
 

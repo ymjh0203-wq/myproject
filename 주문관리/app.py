@@ -257,6 +257,30 @@ if _show_reorder:
 
 st.divider()
 
+# ── 주기 자동수집: 앱을 켜둔 동안 N분마다 '신규주문'을 백그라운드로 다시 수집합니다. ──
+#   쿠팡이 주문 직후 잠깐만 주는 개인정보(수취인명·실전화·개인통관부호)를 창이 열려있을 때
+#   받아두기 위함입니다. 백그라운드 스레드로만 돌리고(화면 전체 리런 안 함), 다이얼로그/긴 작업
+#   중에는 건너뜁니다. 이미 수집이 돌고 있으면 collect_worker.start가 알아서 무시합니다.
+#   간격·사용여부는 설정 > 수집 설정에서 바꿉니다(기본 60분).
+if settings.is_auto_collect_enabled():
+    _auto_interval_sec = max(60, settings.get_auto_collect_interval_min() * 60)
+
+    @st.fragment(run_every=_auto_interval_sec)
+    def _periodic_new_order_collect():
+        if common.bg_rerun_suppressed():
+            return
+        try:
+            from services import collect_worker
+
+            if collect_worker.any_running():
+                return
+            _pf, _pt = common.effective_period_for("new_orders")
+            collect_worker.start("new_orders", [models.WORK_STATUS_NEW], _pf, _pt, reconcile=True)
+        except Exception:
+            pass
+
+    _periodic_new_order_collect()
+
 # fragment(상세패널·표 버튼) 안에서 예약해 둔 다이얼로그를 메인 문맥에서 엽니다.
 # (st.dialog 는 fragment 안에서 직접 호출하면 창이 안 떠서, 여기서 통일 처리)
 common.run_pending_dialog()
