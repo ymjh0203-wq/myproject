@@ -217,7 +217,9 @@ def update_order_from_market(
             UPDATE orders
             SET market_status = ?, raw_response_json = ?, last_updated_at = ?,
                 shipping_fee = ?, settlement_amount = ?,
-                orderer_name = ?, orderer_phone = ?, paid_at = ?, remote_area = ?,
+                orderer_name = COALESCE(NULLIF(?, ''), orderer_name),
+                orderer_phone = COALESCE(NULLIF(?, ''), orderer_phone),
+                paid_at = ?, remote_area = ?,
                 market_delivery_company_name = ?, market_invoice_number = ?
             WHERE id = ?
             """,
