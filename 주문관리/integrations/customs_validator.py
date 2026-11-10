@@ -248,10 +248,26 @@ class UnipassCustomsValidator(BaseCustomsValidator):
 
         # 형식부터 틀린 데이터로 실제 관세청 서버를 호출하지 않도록 미리 걸러줍니다
         # (호출 횟수를 아끼고, 목적 외 사용으로 오해받을 여지도 줄입니다).
-        name_ok = len((data.receiver_name or "").strip()) >= 2
-        phone_ok = bool(MOBILE_PATTERN.match(_normalize_phone(data.phone_raw)))
-        pccc_ok = bool(PCCC_PATTERN.match(_normalize_pccc(data.pccc)))
+        _name = (data.receiver_name or "").strip()
+        _phone = _normalize_phone(data.phone_raw)
+        _pccc = _normalize_pccc(data.pccc)
+        name_ok = len(_name) >= 2
+        phone_ok = bool(MOBILE_PATTERN.match(_phone))
+        pccc_ok = bool(PCCC_PATTERN.match(_pccc))
         if not (name_ok and phone_ok and pccc_ok):
+            # ★수취인명·전화·통관부호가 '전부 비어 있으면' 형식오류가 아니라, 쿠팡이 개인정보를
+            #   아직 안 준 것입니다(개인정보 마스킹). 메시지를 분명히 해 사용자가 헷갈리지 않게 합니다.
+            if not _name and not _phone and not _pccc:
+                return ValidationResult(
+                    is_success=False,
+                    status_code=models.VALIDATION_STATUS_MISSING_INFO,
+                    message="쿠팡이 수취인 개인정보(이름·전화·통관고유부호)를 제공하지 않았습니다. "
+                            "쿠팡 WING의 개인정보 조회 동의/설정을 확인하거나, 잠시 후 '수집하기'로 "
+                            "다시 받아보세요. (쿠팡 개인정보 마스킹 — 검증할 데이터 자체가 없음)",
+                    validated_at=now,
+                    validator_type=self.validator_type,
+                    retryable=True,
+                )
             return ValidationResult(
                 is_success=False,
                 status_code=models.VALIDATION_STATUS_REQUEST_ERROR,
