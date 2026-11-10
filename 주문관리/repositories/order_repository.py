@@ -284,11 +284,20 @@ def upsert_shipping_information(order_id: int, info: dict) -> None:
         )
 
         if existing:
+            # ★비어있는 값으로는 기존 값을 덮어쓰지 않습니다(기존 값 유지).
+            #   쿠팡이 개인정보(수취인명·전화·통관부호)를 '잠깐만' 주고 이후 null로 주는데,
+            #   재수집 때 그 null로 덮으면 먼저 받아둔 PII가 지워지던 문제. (실측 2026-11)
+            #   COALESCE(NULLIF(새값,''), 기존값): 새값이 비면 기존값 그대로 둠.
             connection.execute(
                 """
                 UPDATE shipping_information
-                SET receiver_name = ?, receiver_phone_raw = ?, customs_phone = ?,
-                    pccc = ?, zip_code = ?, address_basic = ?, address_detail = ?
+                SET receiver_name    = COALESCE(NULLIF(?, ''), receiver_name),
+                    receiver_phone_raw = COALESCE(NULLIF(?, ''), receiver_phone_raw),
+                    customs_phone    = COALESCE(NULLIF(?, ''), customs_phone),
+                    pccc             = COALESCE(NULLIF(?, ''), pccc),
+                    zip_code         = COALESCE(NULLIF(?, ''), zip_code),
+                    address_basic    = COALESCE(NULLIF(?, ''), address_basic),
+                    address_detail   = COALESCE(NULLIF(?, ''), address_detail)
                 WHERE order_id = ?
                 """,
                 fields + (order_id,),
