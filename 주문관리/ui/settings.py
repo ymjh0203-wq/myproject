@@ -93,8 +93,12 @@ def _secret_display(value: str, reveal: bool) -> str:
 
 PLATFORM_LABELS = {
     market_repository.PLATFORM_COUPANG: "쿠팡",
+    market_repository.PLATFORM_NAVER: "스스",
     market_repository.PLATFORM_OTHER: "기타(연동 코드 준비 중)",
 }
+
+# 라벨 → platform 코드 (등록 폼에서 선택한 라벨을 코드로 되돌릴 때)
+PLATFORM_BY_LABEL = {label: code for code, label in PLATFORM_LABELS.items()}
 
 
 def _render_market_detail(account: dict, reveal: bool) -> None:
@@ -113,11 +117,17 @@ def _render_market_detail(account: dict, reveal: bool) -> None:
     ]
 
     if account["connection_type"] == "api":
-        rows += [
-            ("업체코드 / Vendor ID", account["api_vendor_id"] or "-"),
-            ("Access Key", _secret_display(account["api_access_key"], reveal)),
-            ("Secret Key", _secret_display(account["api_secret_key"], reveal)),
-        ]
+        if account["platform"] == market_repository.PLATFORM_NAVER:
+            rows += [
+                ("애플리케이션 ID (client_id)", account["api_access_key"] or "-"),
+                ("애플리케이션 시크릿", _secret_display(account["api_secret_key"], reveal)),
+            ]
+        else:
+            rows += [
+                ("업체코드 / Vendor ID", account["api_vendor_id"] or "-"),
+                ("Access Key", _secret_display(account["api_access_key"], reveal)),
+                ("Secret Key", _secret_display(account["api_secret_key"], reveal)),
+            ]
     else:
         rows += [
             ("로그인 아이디", account["login_id"] or "-"),
@@ -146,6 +156,28 @@ def _render_market_detail(account: dict, reveal: bool) -> None:
             market_repository.set_wing_id(account["id"], wing_id)
             st.success(f"'{account['market_name']}' 상점의 WING 아이디를 저장했습니다.")
             st.rerun()
+
+    # 네이버 스마트스토어(커머스API): 키가 맞는지 '연결 테스트'로 토큰만 받아봅니다.
+    if account["platform"] == market_repository.PLATFORM_NAVER:
+        st.caption(
+            "아래 '연결 테스트'는 저장된 애플리케이션 ID·시크릿으로 토큰만 발급받아 "
+            "연결이 되는지만 확인합니다(주문을 바꾸지 않습니다)."
+        )
+        if st.button("네이버 연결 테스트", key=f"naver_test_{account['id']}"):
+            from integrations import naver_client
+
+            try:
+                info = naver_client.check_connection(
+                    account.get("api_access_key") or "", account.get("api_secret_key") or ""
+                )
+                st.success(
+                    f"✅ 연결 성공! '{account['market_name']}' 커머스API 정상입니다. "
+                    f"(토큰 유효 약 {info['expires_in'] // 60}분)"
+                )
+            except naver_client.NaverCommerceError as error:
+                st.error(f"연결 실패: {error}")
+            except Exception as error:  # noqa: BLE001
+                st.error(f"연결 테스트 중 오류: {error}")
 
 
 def _render_market_management() -> None:
@@ -196,20 +228,41 @@ def _render_market_management() -> None:
     else:
         st.caption("등록된 상점/마켓이 없습니다.")
 
-    with st.form("add_market_form", clear_on_submit=True):
-        st.markdown("**새 상점/마켓 추가**")
-        market_name = st.text_input("상점/마켓명", placeholder="예: 굿디얼2호점")
-        platform_label = st.selectbox("플랫폼", options=list(PLATFORM_LABELS.values()))
-        platform = market_repository.PLATFORM_COUPANG if platform_label == PLATFORM_LABELS[market_repository.PLATFORM_COUPANG] else market_repository.PLATFORM_OTHER
+    st.markdown("**새 상점/마켓 추가**")
+    # ★플랫폼·연동방식 선택은 폼 '밖'에 둡니다: st.form 안의 위젯은 값을 바꿔도 '추가'를 누르기
+    #   전까지 화면이 다시 안 그려져서, 플랫폼을 바꿔도 입력칸이 안 바뀌는 문제가 있습니다.
+    #   밖에 두면 선택 즉시 맞는 입력칸(네이버=애플리케이션 ID/시크릿)이 나타납니다.
+    platform_label = st.selectbox(
+        "플랫폼", options=list(PLATFORM_LABELS.values()), key="add_market_platform"
+    )
+    platform = PLATFORM_BY_LABEL.get(platform_label, market_repository.PLATFORM_OTHER)
+    is_naver = platform == market_repository.PLATFORM_NAVER
 
+    # 네이버는 커머스API(공식 API)만 지원 → 연동 방식 선택을 숨기고 공식 API로 고정
+    if is_naver:
+        connection_type_label = "공식 API"
+    else:
         connection_type_label = st.radio(
-            "연동 방식", ["공식 API", "로그인(자동화)"], horizontal=True
+            "연동 방식", ["공식 API", "로그인(자동화)"], horizontal=True, key="add_market_conn"
         )
+
+    with st.form("add_market_form", clear_on_submit=True):
+        market_name = st.text_input("상점/마켓명", placeholder="예: 굿디얼2호점")
 
         vendor_id = access_key = secret_key = None
         login_id = login_password = None
 
-        if connection_type_label == "공식 API":
+        if is_naver:
+            # 네이버 커머스API: 애플리케이션 ID(client_id) + 시크릿(secret)
+            #   저장은 쿠팡과 같은 칸 재사용: access_key=client_id, secret_key=secret
+            st.caption(
+                "커머스API센터(apicenter.commerce.naver.com)에서 애플리케이션 등록 후 받은 "
+                "**애플리케이션 ID**와 **시크릿**을 넣어주세요. 시크릿은 저장만 되고 화면엔 가려집니다."
+            )
+            access_key = st.text_input("애플리케이션 ID (client_id)")
+            secret_key = st.text_input("애플리케이션 시크릿 (secret)", type="password",
+                                       help="$2a$ / $2b$ 로 시작하는 값입니다. 처음부터 끝까지 그대로 복사하세요.")
+        elif connection_type_label == "공식 API":
             vendor_id = st.text_input("업체코드 / Vendor ID")
             access_key = st.text_input("Access Key")
             secret_key = st.text_input("Secret Key", type="password")

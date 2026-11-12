@@ -340,8 +340,8 @@ CREATE_TABLE_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS market_accounts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        market_name TEXT NOT NULL UNIQUE,    -- 사용자가 정한 상점/계정 이름 (예: '굿디얼')
-        platform TEXT NOT NULL DEFAULT 'coupang',  -- 실제 연동 코드가 어느 플랫폼용인지 ('coupang'만 실제 동작함)
+        market_name TEXT NOT NULL,            -- 사용자가 정한 상점/계정 이름 (예: '굿디얼')
+        platform TEXT NOT NULL DEFAULT 'coupang',  -- 어느 플랫폼인지 ('coupang'/'naver'/'other')
         connection_type TEXT NOT NULL,       -- 'api' 또는 'login'
         -- connection_type='api' 일 때 쓰는 항목
         api_vendor_id TEXT,
@@ -351,7 +351,10 @@ CREATE_TABLE_STATEMENTS = [
         login_id TEXT,
         login_password TEXT,
         is_active INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        -- ★이름은 '플랫폼별로' 고유합니다. 같은 이름이라도 플랫폼이 다르면 등록 가능
+        --   (예: 쿠팡 '굿디얼' + 네이버 '굿디얼'). 화면에 플랫폼이 같이 표시돼 구분됩니다.
+        UNIQUE (platform, market_name)
     )
     """,
     """
@@ -672,6 +675,67 @@ def _migrate_taobao_link_multi(connection) -> None:
     connection.execute("ALTER TABLE taobao_link_new RENAME TO taobao_link")
 
 
+def _migrate_market_name_unique_per_platform(connection) -> None:
+    """
+    (2026-11) market_accounts.market_name 의 '전체 고유' 제약을 '(platform, market_name) 조합 고유'로
+    바꿉니다. 같은 이름이라도 플랫폼이 다르면 등록 가능하게(예: 쿠팡 '굿디얼' + 네이버 '굿디얼').
+    여러 번 실행해도 안전(idempotent)합니다.
+    """
+    if config.use_postgres():
+        # 옛 '단일컬럼 UNIQUE'가 있을 때만 → 조합 UNIQUE로 교체합니다.
+        #   (신규설치/이미 이관된 DB는 이 제약이 없어 그냥 넘어갑니다. 데이터가 호환되므로
+        #    교체는 안전하게 성공합니다 - 예전엔 이름이 전체 고유였으니 (platform,이름)도 고유.)
+        old = connection.execute(
+            "SELECT 1 FROM pg_constraint WHERE conname = 'market_accounts_market_name_key'"
+        ).fetchone()
+        if old:
+            connection.execute("ALTER TABLE market_accounts DROP CONSTRAINT market_accounts_market_name_key")
+            connection.execute(
+                "ALTER TABLE market_accounts ADD CONSTRAINT market_accounts_platform_name_key "
+                "UNIQUE (platform, market_name)"
+            )
+        return
+
+    # SQLite: 컬럼 단위 UNIQUE는 ALTER로 못 지우므로, 옛 제약이 있으면 표를 재생성해 옮깁니다.
+    idx = connection.execute("PRAGMA index_list(market_accounts)").fetchall()
+    has_name_unique = False
+    for ix in idx:
+        # ix: (seq, name, unique, origin, partial) - origin 'u'면 컬럼 UNIQUE에서 자동생성된 것
+        name = ix[1] if not isinstance(ix, dict) else ix.get("name")
+        info = connection.execute(f"PRAGMA index_info({name})").fetchall()
+        colnames = [(r[2] if not isinstance(r, dict) else r.get("name")) for r in info]
+        is_unique = (ix[2] if not isinstance(ix, dict) else ix.get("unique"))
+        if is_unique and colnames == ["market_name"]:
+            has_name_unique = True
+    if not has_name_unique:
+        return  # 이미 새 스키마이거나 표 없음
+    connection.execute("DROP TABLE IF EXISTS market_accounts_new")
+    connection.execute(
+        """
+        CREATE TABLE market_accounts_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            market_name TEXT NOT NULL,
+            platform TEXT NOT NULL DEFAULT 'coupang',
+            connection_type TEXT NOT NULL,
+            api_vendor_id TEXT, api_access_key TEXT, api_secret_key TEXT,
+            login_id TEXT, login_password TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            wing_id TEXT,
+            UNIQUE (platform, market_name)
+        )
+        """
+    )
+    old_cols = _existing_columns(connection, "market_accounts")
+    shared = [c for c in ["id", "market_name", "platform", "connection_type", "api_vendor_id",
+                          "api_access_key", "api_secret_key", "login_id", "login_password",
+                          "is_active", "created_at", "wing_id"] if c in old_cols]
+    cols_csv = ", ".join(shared)
+    connection.execute(f"INSERT INTO market_accounts_new ({cols_csv}) SELECT {cols_csv} FROM market_accounts")
+    connection.execute("DROP TABLE market_accounts")
+    connection.execute("ALTER TABLE market_accounts_new RENAME TO market_accounts")
+
+
 def init_db() -> None:
     """필요한 테이블이 없으면 만듭니다. 이미 있으면 빠진 컬럼만 추가합니다."""
     statements = _postgres_ddl_statements() if config.use_postgres() else CREATE_TABLE_STATEMENTS
@@ -682,6 +746,7 @@ def init_db() -> None:
         _add_missing_columns(connection)
         _migrate_fix_instruct_back_to_ready(connection)
         _migrate_taobao_link_multi(connection)
+        _migrate_market_name_unique_per_platform(connection)
         connection.execute("CREATE INDEX IF NOT EXISTS idx_taobao_link_code ON taobao_link(seller_product_code)")
         connection.commit()
     finally:

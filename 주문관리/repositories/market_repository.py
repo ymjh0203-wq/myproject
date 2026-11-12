@@ -15,6 +15,7 @@ from datetime import datetime
 from database import get_connection
 
 PLATFORM_COUPANG = "coupang"  # 실제 연동 코드가 있는 플랫폼
+PLATFORM_NAVER = "naver"      # 네이버 스마트스토어(커머스API) - 주문수집 연동
 PLATFORM_OTHER = "other"      # 아직 연동 코드가 없는 플랫폼 (등록만 가능)
 
 
@@ -58,13 +59,21 @@ def get_market_account(market_account_id: int) -> dict:
         connection.close()
 
 
-def find_by_market_name(market_name: str) -> dict:
-    """같은 이름으로 이미 등록된 계정이 있는지 찾습니다 (활성/비활성 모두 포함)."""
+def find_by_market_name(market_name: str, platform: str = None) -> dict:
+    """같은 이름(+플랫폼)으로 이미 등록된 계정이 있는지 찾습니다 (활성/비활성 모두 포함).
+    ★이름은 '플랫폼별로' 고유합니다. platform을 주면 그 플랫폼 안에서만 찾습니다
+      (예: 쿠팡 '굿디얼'과 네이버 '굿디얼'은 서로 다른 계정)."""
     connection = get_connection()
     try:
-        row = connection.execute(
-            "SELECT * FROM market_accounts WHERE market_name = ?", (market_name,)
-        ).fetchone()
+        if platform:
+            row = connection.execute(
+                "SELECT * FROM market_accounts WHERE market_name = ? AND platform = ?",
+                (market_name, platform),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT * FROM market_accounts WHERE market_name = ?", (market_name,)
+            ).fetchone()
         return dict(row) if row else None
     finally:
         connection.close()
@@ -88,14 +97,15 @@ def create_market_account(
     덮어씁니다 (삭제했던 상점을 같은 이름으로 다시 등록하는 경우를 위함).
     같은 이름의 계정이 아직 사용 중(활성)이면 DuplicateMarketNameError를 냅니다.
     """
-    existing = find_by_market_name(market_name)
+    # ★같은 '플랫폼 안에서만' 중복을 봅니다. (쿠팡 '굿디얼' + 네이버 '굿디얼'은 둘 다 등록 가능)
+    existing = find_by_market_name(market_name, platform=platform)
 
     connection = get_connection()
     try:
         if existing:
             if existing["is_active"]:
                 raise DuplicateMarketNameError(
-                    f"'{market_name}' 이름은 이미 사용 중인 상점/마켓이 있습니다. 다른 이름을 써주세요."
+                    f"'{market_name}' 이름은 이미 사용 중인 상점/마켓이 있습니다({platform}). 다른 이름을 써주세요."
                 )
             connection.execute(
                 """

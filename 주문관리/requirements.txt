@@ -21,3 +21,5 @@ psycopg2-binary==2.9.10
 streamlit-aggrid==1.2.1.post2
 
 streamlit-sortables
+# 네이버 스마트스토어(커머스API) 토큰 서명용 (bcrypt 전자서명)
+bcrypt==5.0.0
