@@ -90,10 +90,27 @@ def fetch_tracking_for_orders(orders: list, progress=None) -> dict:
       matched: {market_order_id(str): (택배사코드, 송장번호)}  # 표에 채울 대상
       scanned/with_gr/no_gr/filled/not_ready/errors/error_samples: 통계
     """
+    import time
+
     matched = {}
     scanned = with_gr = filled = no_gr = not_ready = errors = 0
     error_samples = []
 
+    def _apply_success(o, code, inv):
+        """조회 성공 처리: 송장이 있으면 표에 채우고 DB에도 저장. inv 없으면 '아직 없음'."""
+        nonlocal filled, not_ready
+        if inv:
+            matched[str(o.get("market_order_id"))] = (code, inv)
+            filled += 1
+            try:
+                order_repository.set_quickstar_invoice(o["order_id"], inv)
+            except Exception:
+                pass
+        else:
+            not_ready += 1
+
+    # ---- 1차: 전체 조회 ----
+    errored = []  # 이번에 오류난 주문(잠시 뒤 1회 재시도)
     for i, o in enumerate(orders):
         scanned += 1
         gr = str(o.get("gr") or "").strip()
@@ -108,25 +125,33 @@ def fetch_tracking_for_orders(orders: list, progress=None) -> dict:
             data = (resp or {}).get("data") or {}
             code, inv = _extract_tracking(data)
         except Exception as e:  # noqa: BLE001
-            errors += 1
-            if len(error_samples) < 6:
-                error_samples.append(f"{o.get('market_order_id') or gr}: {e}")
+            errored.append((o, e))
             _progress(progress, i, orders)
             continue
+        _apply_success(o, code, inv)
+        _progress(progress, i, orders)
 
-        if inv:
-            matched[str(o.get("market_order_id"))] = (code, inv)
-            filled += 1
-            # DB에도 기억(다음에 다시 조회 안 해도 되도록). 실패해도 표 채우기는 계속.
+    # ---- 2차(재발방지): 오류난 것만 잠깐 뒤 1회 재조회 ----
+    #   ★원인: GR을 막 접수한 직후엔 퀵스타가 그 GR 조회에 일시적으로 실패(code!=1·레이트리밋)를
+    #     주기도 합니다. 접수 몇 초 뒤면 정상 조회되므로, 오류난 건만 짧게 쉬었다 한 번 더 봅니다.
+    if errored:
+        if progress:
             try:
-                order_repository.set_quickstar_invoice(o["order_id"], inv)
+                progress(len(orders), len(orders))  # 진행바 유지
             except Exception:
                 pass
-        else:
-            # 조회는 됐지만 아직 송장 발급 전(배대지가 국내로 출고하기 전)
-            not_ready += 1
-
-        _progress(progress, i, orders)
+        time.sleep(2.5)
+        for o, first_err in errored:
+            gr = str(o.get("gr") or "").strip()
+            try:
+                data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
+                code, inv = _extract_tracking(data)
+            except Exception as e:  # noqa: BLE001
+                errors += 1
+                if len(error_samples) < 6:
+                    error_samples.append(f"{o.get('market_order_id') or gr}: {e}")
+                continue
+            _apply_success(o, code, inv)
 
     return {
         "ok": True,

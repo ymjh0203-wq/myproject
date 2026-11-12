@@ -40,6 +40,10 @@ TIMEOUT_SECONDS = 20
 class QuickstarError(Exception):
     """퀵스타 API 호출이 실패했을 때 발생시킵니다."""
 
+    def __init__(self, message: str, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable  # True면 잠시 후 다시 시도할 만한 일시 오류(5xx·통신오류)
+
 
 def _session() -> requests.Session:
     session = requests.Session()
@@ -60,16 +64,45 @@ def _check_credentials() -> None:
 def _parse(response: requests.Response) -> dict:
     """퀵스타 응답을 확인해서, 실패면 QuickstarError로 바꿔 던집니다."""
     if response.status_code >= 400:
-        raise QuickstarError(f"퀵스타 서버 오류입니다 (상태코드 {response.status_code}).")
+        # 5xx(서버 일시 오류)와 429(요청 과다)는 재시도 가능, 그 외 4xx는 재시도해도 소용없음.
+        # ★429를 재시도에 포함: 송장 자동입력처럼 GR 여러 건을 빠르게 연속 조회할 때
+        #   순간적으로 레이트리밋에 걸리면 재시도 없이 '오류'로 떨어지던 문제를 막습니다.
+        raise QuickstarError(
+            f"퀵스타 서버 오류입니다 (상태코드 {response.status_code}).",
+            retryable=(response.status_code >= 500 or response.status_code == 429),
+        )
     try:
         body = response.json()
     except ValueError:
-        raise QuickstarError(f"퀵스타 응답을 해석할 수 없습니다: {response.text[:200]}")
+        raise QuickstarError(f"퀵스타 응답을 해석할 수 없습니다: {response.text[:200]}", retryable=True)
 
     # 퀵스타는 code "1"이 성공, "2"가 실패입니다 (HTTP 상태코드는 실패해도 200).
     if str(body.get("code")) != "1":
         raise QuickstarError(body.get("message") or "알 수 없는 오류가 발생했습니다.")
     return body
+
+
+def _get_with_retry(path: str, *, headers: dict, params: dict = None, attempts: int = 3) -> dict:
+    """GET 요청을 보내고 _parse까지 하되, 일시 오류(5xx·타임아웃·통신오류)는 몇 번 재시도합니다.
+    ★송장 자동입력처럼 여러 건을 연속 조회할 때, 한 건이 일시 오류로 빠지면 그 주문만
+    송장이 안 채워지던 문제를 줄입니다. 업무오류(code 2 등)는 재시도해도 소용없어 즉시 올립니다."""
+    import time
+
+    last = None
+    for attempt in range(attempts):
+        try:
+            response = _session().get(BASE_URL + path, headers=headers, params=params, timeout=TIMEOUT_SECONDS)
+            return _parse(response)
+        except QuickstarError as error:
+            last = error
+            if not getattr(error, "retryable", False) or attempt == attempts - 1:
+                raise
+        except requests.exceptions.RequestException as error:
+            last = QuickstarError(f"퀵스타 통신 오류: {error}", retryable=True)
+            if attempt == attempts - 1:
+                raise last
+        time.sleep(1.0 * (attempt + 1))  # 1s → 2s 백오프
+    raise last  # (도달하지 않음)
 
 
 # ------------------------------------------------------
@@ -190,10 +223,8 @@ def fetch_application(order_no: str) -> dict:
     order_no는 접수 응답으로 받은 그룹번호(ex: GR2511197392215)입니다.
     """
     _check_credentials()
-    response = _session().get(
-        BASE_URL + "applicationInquiry_api.php",
+    return _get_with_retry(
+        "applicationInquiry_api.php",
         headers={"user-session": config.QUICKSTAR_API_KEY},
         params={"userId": config.QUICKSTAR_USER_ID, "orderNo": order_no},
-        timeout=TIMEOUT_SECONDS,
     )
-    return _parse(response)
