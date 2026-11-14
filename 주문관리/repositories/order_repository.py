@@ -436,6 +436,9 @@ def clear_quickstar_gr(order_id: int) -> None:
     try:
         connection.execute(
             "UPDATE orders SET quickstar_order_no = NULL, quickstar_invoice = NULL, "
+            "quickstar_cost_unit = NULL, quickstar_cost_ship = NULL, "
+            "quickstar_cost_recv_name = NULL, quickstar_cost_recv_phone = NULL, "
+            "quickstar_cost_kinds = NULL, quickstar_cost_tcnt = NULL, quickstar_cost_at = NULL, "
             "last_updated_at = ? WHERE id = ?",
             (_now(), order_id),
         )
@@ -452,6 +455,65 @@ def set_quickstar_invoice(order_id: int, invoice: str) -> None:
         connection.execute(
             "UPDATE orders SET quickstar_invoice = ?, last_updated_at = ? WHERE id = ?",
             (invoice, _now(), order_id),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def get_cached_quickstar_cost(gr: str) -> dict:
+    """그 GR의 배대지 매입가·배송비 캐시가 있으면 돌려줍니다(완전한 것만 저장돼 있음).
+    매출정리에서 퀵스타 재조회(분당 10회 제한) 없이 바로 채우기 위함입니다.
+    반환: {unit, ship, recv_name, recv_phone, kinds, tcnt} 또는 None."""
+    gr = (gr or "").strip()
+    if not gr:
+        return None
+    connection = get_connection()
+    try:
+        row = connection.execute(
+            """
+            SELECT quickstar_cost_unit, quickstar_cost_ship,
+                   quickstar_cost_recv_name, quickstar_cost_recv_phone,
+                   quickstar_cost_kinds, quickstar_cost_tcnt
+            FROM orders
+            WHERE quickstar_order_no = ? AND quickstar_cost_at IS NOT NULL
+                  AND quickstar_cost_ship IS NOT NULL
+            LIMIT 1
+            """,
+            (gr,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "unit": row["quickstar_cost_unit"],
+            "ship": row["quickstar_cost_ship"],
+            "recv_name": row["quickstar_cost_recv_name"] or "",
+            "recv_phone": row["quickstar_cost_recv_phone"] or "",
+            "kinds": row["quickstar_cost_kinds"],
+            "tcnt": row["quickstar_cost_tcnt"],
+        }
+    finally:
+        connection.close()
+
+
+def save_quickstar_cost(gr: str, unit, ship, recv_name: str, recv_phone: str,
+                        kinds: int, tcnt: int) -> None:
+    """그 GR의 배대지 매입가·배송비 등을 캐시에 저장합니다(같은 GR인 주문 행 모두에).
+    ★완전할 때(단가+배송비 둘 다)만 부르세요 — 불완전하면 다음에 다시 조회해야 하므로."""
+    gr = (gr or "").strip()
+    if not gr:
+        return
+    connection = get_connection()
+    try:
+        connection.execute(
+            """
+            UPDATE orders
+            SET quickstar_cost_unit = ?, quickstar_cost_ship = ?,
+                quickstar_cost_recv_name = ?, quickstar_cost_recv_phone = ?,
+                quickstar_cost_kinds = ?, quickstar_cost_tcnt = ?, quickstar_cost_at = ?
+            WHERE quickstar_order_no = ?
+            """,
+            (unit, ship, recv_name or "", recv_phone or "", kinds, tcnt, _now(), gr),
         )
         connection.commit()
     finally:

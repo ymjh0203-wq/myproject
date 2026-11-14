@@ -318,17 +318,30 @@ def fill_uploaded_ledger(file_bytes: bytes, date_from=None, date_to=None, progre
         else:
             if True:
                 try:
-                    if gr in gr_cache:
-                        data = gr_cache[gr]
+                    # ★캐시: 전에 조회해 저장해둔 GR이면 퀵스타 재조회 없이 바로 사용
+                    #   (퀵스타 배대지 조회는 분당 10회 제한 → 재실행·중복 GR은 캐시로 즉시).
+                    cached = order_repository.get_cached_quickstar_cost(gr)
+                    if cached:
+                        unit, ship = cached["unit"], cached["ship"]
+                        tcnt, kinds = cached["tcnt"], cached["kinds"]
+                        app_name, app_phone = cached["recv_name"], cached["recv_phone"]
                     else:
-                        data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
-                        gr_cache[gr] = data
-                    unit, ship, tcnt, kinds = _extract_costs(data, qty)
-
-                    # ★수취인 대조: 배대지 신청서의 수취인명+전화가 이 주문의 수취인과
-                    #   둘 다 맞아야 '인증'. 안 맞으면 단가·배송비를 넣지 않고 사유만 남깁니다.
-                    #   (GR이 엉뚱한 사람 것으로 매칭돼도 남의 값이 섞이지 않게)
-                    app_name, app_phone = ledger_match.receiver_of_application(data)
+                        if gr in gr_cache:
+                            data = gr_cache[gr]
+                        else:
+                            data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}
+                            gr_cache[gr] = data
+                        unit, ship, tcnt, kinds = _extract_costs(data, qty)
+                        # ★수취인 대조용 배대지 수취인(아래 verify에서 주문 수취인과 대조)
+                        app_name, app_phone = ledger_match.receiver_of_application(data)
+                        # 완전할 때(단가+배송비 둘 다)만 캐시 저장 → 다음엔 재조회 안 함.
+                        #   (배송비 없는 '출고 전'은 저장 안 함: 나중에 다시 조회해야 하므로)
+                        if unit is not None and ship is not None:
+                            try:
+                                order_repository.save_quickstar_cost(
+                                    gr, unit, ship, app_name, app_phone, kinds, tcnt)
+                            except Exception:  # noqa: BLE001
+                                pass
                     _dbrec = recv_map.get(moid) if moid else None
                     if _dbrec and (_dbrec.get("name") or _dbrec.get("phones")):
                         ord_name = _dbrec.get("name") or ""

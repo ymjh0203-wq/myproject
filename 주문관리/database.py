@@ -514,6 +514,16 @@ ADDITIONAL_COLUMNS = {
         ("cs_memo", "TEXT"),
         ("cs_memo_updated_at", "TEXT"),  # CS메모를 마지막으로 저장한 시각(메모 전용 날짜)
         ("cs_memo_done", "INTEGER"),     # CS메모 처리완료 여부(1=완료 → 목록에서 초록색)
+        # 매출정리용 '배대지 매입가·배송비 캐시' — 한 번 조회한 GR의 값을 여기에 적어두면
+        # 다음 매출정리 때 재조회(퀵스타 분당 10회 제한) 없이 바로 채웁니다. GR이 완전할 때
+        # (단가+배송비 둘 다)만 저장합니다. (행이 안 늘어나고, 이미 있는 주문에 숫자만 더함)
+        ("quickstar_cost_unit", "REAL"),        # 단가(CNY)
+        ("quickstar_cost_ship", "INTEGER"),     # 배송비(원)
+        ("quickstar_cost_recv_name", "TEXT"),   # 배대지 수취인명(대조 재확인용)
+        ("quickstar_cost_recv_phone", "TEXT"),  # 배대지 수취인 전화(대조 재확인용)
+        ("quickstar_cost_kinds", "INTEGER"),    # GR 상품 종류 수(의심 표시용)
+        ("quickstar_cost_tcnt", "INTEGER"),     # 배대지 총수량(수량 불일치 의심용)
+        ("quickstar_cost_at", "TEXT"),          # 이 캐시를 저장한 시각
     ],
     "order_items": [
         ("seller_product_code", "TEXT"),
