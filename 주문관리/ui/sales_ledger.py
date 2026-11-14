@@ -91,10 +91,14 @@ def _render_upload_fill() -> None:
 
         if up is not None and st.button("🔎 이 파일에 원가·배송비 채우기", type="primary", key="ledger_upload_run"):
             bar = st.progress(0.0, text="배대지 조회 준비 중...")
-            res = ledger_upload_service.fill_uploaded_ledger(
-                up.getvalue(), date_from=_dfrom, date_to=_dto,
-                progress=lambda i, n: bar.progress(i / n, text=f"처리 {i}/{n}"),
-            )
+            # ★배대지 조회는 '분당 10회' 한도라 건수가 많으면 중간에 자동으로 기다립니다(쓰로틀).
+            #   그래서 오래 걸릴 수 있어, 배경 자동수집이 이 작업을 중간에 끊지 않도록 감쌉니다.
+            st.caption("※ 배대지 호출 한도(분당 10회) 때문에 건수가 많으면 몇 분 걸릴 수 있어요. 창을 닫지 말고 기다려 주세요.")
+            with common.suppress_bg_rerun():
+                res = ledger_upload_service.fill_uploaded_ledger(
+                    up.getvalue(), date_from=_dfrom, date_to=_dto,
+                    progress=lambda i, n: bar.progress(i / n, text=f"처리 {i}/{n}"),
+                )
             bar.empty()
             if not res.get("ok"):
                 st.error(res.get("error") or "채우기에 실패했습니다.")

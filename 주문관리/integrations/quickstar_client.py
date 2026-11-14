@@ -36,6 +36,36 @@ DEFAULT_TRANSPORT_NO = "34"  # 항공(일반)
 
 TIMEOUT_SECONDS = 20
 
+# ---- 호출 한도(분당 10회) 쓰로틀 ----
+# 퀵스타 배대지 조회(fetch_application)는 '분당 10회' 제한이 있습니다. 매출정리처럼
+# GR 여러 건을 연속 조회하면 '호출 한도(분당 10회)를 초과' 오류가 납니다(code!=1이라
+# 재시도도 소용없음). 그래서 호출 직전에 최근 60초 횟수를 보고, 한도에 닿으면 가장
+# 오래된 호출이 창을 벗어날 때까지 자동으로 기다립니다. 모든 조회(매출정리·송장
+# 자동입력·배송중 송장변경)가 이 한도를 '함께' 공유합니다(스레드 안전).
+import threading as _threading
+import time as _time
+from collections import deque as _deque
+
+_RATE_MAX_PER_MIN = 9          # 10회 제한에 1건 여유(동시호출·시계오차 대비)
+_RATE_WINDOW_SEC = 60.0
+_rate_lock = _threading.Lock()
+_rate_calls = _deque()
+
+
+def _throttle_quickstar() -> None:
+    """분당 호출 한도를 넘지 않도록, 필요하면 기다렸다가 진행합니다."""
+    while True:
+        with _rate_lock:
+            now = _time.monotonic()
+            while _rate_calls and now - _rate_calls[0] >= _RATE_WINDOW_SEC:
+                _rate_calls.popleft()
+            if len(_rate_calls) < _RATE_MAX_PER_MIN:
+                _rate_calls.append(now)
+                return
+            wait = _RATE_WINDOW_SEC - (now - _rate_calls[0]) + 0.3
+        if wait > 0:
+            _time.sleep(min(wait, 65.0))  # 락 밖에서 대기(다른 스레드도 진행 가능)
+
 
 class QuickstarError(Exception):
     """퀵스타 API 호출이 실패했을 때 발생시킵니다."""
@@ -78,7 +108,12 @@ def _parse(response: requests.Response) -> dict:
 
     # 퀵스타는 code "1"이 성공, "2"가 실패입니다 (HTTP 상태코드는 실패해도 200).
     if str(body.get("code")) != "1":
-        raise QuickstarError(body.get("message") or "알 수 없는 오류가 발생했습니다.")
+        msg = body.get("message") or "알 수 없는 오류가 발생했습니다."
+        # '호출 한도(분당 10회) 초과'는 잠시 뒤 다시 하면 되는 일시 오류 → 재시도 대상으로.
+        is_rate = ("한도" in msg) or ("분당" in msg)
+        err = QuickstarError(msg, retryable=is_rate)
+        err.rate_limited = is_rate
+        raise err
     return body
 
 
@@ -91,12 +126,17 @@ def _get_with_retry(path: str, *, headers: dict, params: dict = None, attempts: 
     last = None
     for attempt in range(attempts):
         try:
+            _throttle_quickstar()  # 분당 10회 한도를 넘지 않게 필요하면 대기
             response = _session().get(BASE_URL + path, headers=headers, params=params, timeout=TIMEOUT_SECONDS)
             return _parse(response)
         except QuickstarError as error:
             last = error
             if not getattr(error, "retryable", False) or attempt == attempts - 1:
                 raise
+            # 한도 초과면 분당 제한이 풀리게 길게(15초×시도) 쉬고, 그 외 일시오류는 짧게.
+            if getattr(error, "rate_limited", False):
+                time.sleep(15.0 * (attempt + 1))
+                continue
         except requests.exceptions.RequestException as error:
             last = QuickstarError(f"퀵스타 통신 오류: {error}", retryable=True)
             if attempt == attempts - 1:
