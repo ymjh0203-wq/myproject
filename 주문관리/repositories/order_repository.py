@@ -496,6 +496,29 @@ def get_cached_quickstar_cost(gr: str) -> dict:
         connection.close()
 
 
+def list_grs_needing_cost(limit: int = 30) -> list:
+    """원가·배송비 캐시가 아직 없는 '출고된' 주문들의 GR을 (최근 주문 먼저) 돌려줍니다.
+    백그라운드로 미리 배대지 원가를 채워두기 위한 대상입니다.
+    (발송대기=출고 전은 배송비가 아직 없어 제외. 배송중/배송완료/구매확정만.)"""
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            """
+            SELECT o.quickstar_order_no AS gr
+            FROM orders o
+            WHERE o.quickstar_order_no LIKE 'GR%' AND o.quickstar_cost_at IS NULL
+                  AND o.work_status IN ('배송중', '배송완료', '구매확정')
+            GROUP BY o.quickstar_order_no
+            ORDER BY MAX(o.ordered_at) DESC
+            LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        return [r["gr"] for r in rows]
+    finally:
+        connection.close()
+
+
 def save_quickstar_cost(gr: str, unit, ship, recv_name: str, recv_phone: str,
                         kinds: int, tcnt: int) -> None:
     """그 GR의 배대지 매입가·배송비 등을 캐시에 저장합니다(같은 GR인 주문 행 모두에).

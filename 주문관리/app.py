@@ -80,6 +80,16 @@ if not st.session_state.get("_auto_collected_once"):
     except Exception:
         pass
 
+    # 배대지 원가·배송비 '백그라운드 미리채우기' 시작(앱 켜둔 동안 조용히 캐시 채움 →
+    #  매출정리를 열 땐 이미 대부분 채워져 즉시). 설정>수집 설정에서 끌 수 있음.
+    try:
+        from services import cost_prefetch_worker
+
+        if cost_prefetch_worker.is_enabled():
+            cost_prefetch_worker.ensure_started()
+    except Exception:
+        pass
+
 # ------------------------------------------------------------------
 # 화면(메뉴)을 옮겨다녀도 각 화면의 '입력값'이 초기화되지 않게 유지합니다.
 # Streamlit은 '이번 실행에서 그려지지 않은 위젯'(예: 지금 안 보는 다른 단계 화면의
