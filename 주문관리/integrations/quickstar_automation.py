@@ -151,47 +151,6 @@ def is_logged_in() -> bool:
         pw.stop()
 
 
-def fetch_ship_cost_html(sdate: str, edate: str, state: str = "307", limit: int = 5000) -> str:
-    """
-    퀵스타 '신청내역(배송대행)' 목록을 웹 세션으로 한 번에 받아 HTML을 돌려줍니다.
-    (API applicationInquiry는 분당 10회 제한이라 다건이 느림 → 웹 목록 AJAX는 한 번에 수천 건)
-      - state: '307'=출고완료(배송비까지 확정), 기타 상태코드도 가능
-      - sdate/edate: 출고일(dtype=out) 기준 기간 (YYYY-MM-DD)
-    반환 HTML은 services/quickstar_cost_sync.py 에서 GR·단가(CNY)·배송비(KRW)·수취인명으로 파싱합니다.
-    ※ 웹 로그인(자동화 프로필)이 돼 있어야 합니다. 안 돼 있으면 안내 오류를 냅니다.
-    """
-    import config
-
-    mb_id = config.QUICKSTAR_USER_ID or ""
-    pw, context = _launch(headless=True)
-    try:
-        page = context.pages[0] if context.pages else context.new_page()
-        page.goto(QUICKSTAR_HOME, timeout=30000)
-        if "로그아웃" not in page.content():
-            raise QuickstarAutomationError(
-                "퀵스타에 로그인되어 있지 않습니다. 먼저 '퀵스타 자동화 설정(최초 1회 로그인)'을 해주세요."
-            )
-        url = (
-            "/elpisbbs/ajax.nt_order_list_member.php"
-            f"?last=0&limit={int(limit)}&page=1&find=gr_name&value=&or_de_no="
-            f"&state={state}&sdate={sdate}&edate={edate}&mb_id={mb_id}&type=ship"
-            "&last_code=&it_code=&dtype=out&gr_output_stay_type=&gr_var5="
-            "&gr_unipass_result=&gr_fltno=&gr_fltno2=&gr_sms=&gr_tr_no=&acc_sel="
-        )
-        # 로그인된 세션에서 그 AJAX를 호출해 HTML 텍스트를 받아옵니다.
-        html = page.evaluate(
-            """async (u) => { const r = await fetch(u, {credentials:'include'}); return await r.text(); }""",
-            url,
-        )
-        return html or ""
-    finally:
-        try:
-            context.close()
-        except Exception:
-            pass
-        pw.stop()
-
-
 def _open_application_form(page):
     """배송대행 신청 폼으로 들어갑니다. (로그인 상태에서 주소로 바로 이동)"""
     page.goto(QUICKSTAR_APPLY, timeout=30000)

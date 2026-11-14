@@ -64,42 +64,6 @@ def _render_upload_fill() -> None:
     """
     from services import ledger_upload_service
 
-    # ── 퀵스타 신청내역에서 원가·배송비를 '한 번에' 미리 받아 캐시에 저장 ──
-    #   배대지 조회 API는 분당 10회라 느리지만, 퀵스타 웹 신청내역 목록은 한 번에 수천 건.
-    #   여기서 미리 받아두면, 아래 '엑셀 올려 채우기'가 재조회 없이 즉시 채웁니다.
-    with st.expander("⚡ 퀵스타에서 원가·배송비 미리 받아두기 (추천 — 이걸 먼저 하면 아래가 즉시)", expanded=False):
-        st.caption(
-            "퀵스타 **신청내역(출고완료)**을 한 번에 받아 각 주문의 매입가·배송비를 저장해둡니다. "
-            "배대지 조회 API(분당 10회) 대신 웹 목록을 쓰므로 **제한 없이 한 번에** 끝납니다. "
-            "★퀵스타 **자동화 로그인(최초 1회)**이 돼 있어야 합니다(설정 또는 발송대기 화면). "
-            "한 번 받아두면 매출정리가 즉시 채워지고, 새로 출고된 것만 가끔 다시 받으면 됩니다."
-        )
-        _t = date.today()
-        qc1, qc2 = st.columns(2)
-        with qc1:
-            _qfrom = st.date_input("출고일 시작", value=_t.replace(day=1), key="qscost_from")
-        with qc2:
-            _qto = st.date_input("출고일 종료", value=_t, key="qscost_to")
-        if st.button("⚡ 퀵스타에서 원가·배송비 일괄 가져오기", type="primary", key="qscost_sync_run"):
-            from services import quickstar_cost_sync
-
-            bar = st.progress(0.0, text="퀵스타 신청내역을 받는 중...")
-            try:
-                with common.suppress_bg_rerun():
-                    res = quickstar_cost_sync.sync_costs(
-                        _qfrom.isoformat(), _qto.isoformat(),
-                        progress=lambda i, n: bar.progress(i / n if n else 1.0, text=f"저장 {i}/{n}"),
-                    )
-                bar.empty()
-                st.success(
-                    f"✅ 퀵스타 신청내역 {res['fetched']}건 받아 **{res['saved']}건** 원가·배송비 저장. "
-                    f"(앱에 없는 주문 {res['no_order']} · 수취인 불일치 건너뜀 {res['name_mismatch']}) "
-                    f"→ 이제 아래 '엑셀 올려 채우기'가 즉시 채워집니다."
-                )
-            except Exception as error:  # noqa: BLE001
-                bar.empty()
-                st.error(f"가져오기 실패: {error}")
-
     with st.expander("📎 내 매출 엑셀 올려서 원가·배송비 자동 채우기 (내 양식 그대로)", expanded=False):
         st.caption(
             "내가 쓰는 매출 엑셀(‘마켓 주문번호’·‘단순매입가’·‘배송비용’ 칸이 있는 시트)을 올리면, "
