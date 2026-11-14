@@ -758,6 +758,8 @@ def init_db() -> None:
         _migrate_taobao_link_multi(connection)
         _migrate_market_name_unique_per_platform(connection)
         connection.execute("CREATE INDEX IF NOT EXISTS idx_taobao_link_code ON taobao_link(seller_product_code)")
+        # GR번호로 조회/캐시(매출정리 배대지 캐시, GR백필 등)가 전체 훑기 안 되게 색인.
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_orders_quickstar_order_no ON orders(quickstar_order_no)")
         connection.commit()
     finally:
         connection.close()
