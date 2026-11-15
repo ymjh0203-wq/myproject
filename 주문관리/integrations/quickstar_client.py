@@ -52,6 +52,28 @@ _rate_lock = _threading.Lock()
 _rate_calls = _deque()
 
 
+# ---- 포그라운드(사용자 직접 작업) 우선 ----
+# 백그라운드 미리채우기 워커가 분당 한도를 다 써버려 사용자의 GR 채움·송장 자동입력이
+# 느려지지 않도록, '포그라운드 조회가 방금 있었는지'를 기록합니다. 백그라운드 워커는
+# seconds_since_foreground_call()이 작으면(사용자가 방금 썼으면) 양보(대기)합니다.
+_foreground_last = [0.0]
+_bg_tls = _threading.local()
+
+
+def mark_this_thread_background() -> None:
+    """현재 스레드를 '백그라운드'로 표시합니다(미리채우기 워커가 자기 스레드에서 1회 호출)."""
+    _bg_tls.is_bg = True
+
+
+def _is_background_thread() -> bool:
+    return bool(getattr(_bg_tls, "is_bg", False))
+
+
+def seconds_since_foreground_call() -> float:
+    """포그라운드(사용자) 조회가 마지막으로 시작된 지 몇 초 지났는지 돌려줍니다."""
+    return _time.monotonic() - _foreground_last[0]
+
+
 def _throttle_quickstar() -> None:
     """분당 호출 한도를 넘지 않도록, 필요하면 기다렸다가 진행합니다."""
     while True:
@@ -122,6 +144,10 @@ def _get_with_retry(path: str, *, headers: dict, params: dict = None, attempts: 
     ★송장 자동입력처럼 여러 건을 연속 조회할 때, 한 건이 일시 오류로 빠지면 그 주문만
     송장이 안 채워지던 문제를 줄입니다. 업무오류(code 2 등)는 재시도해도 소용없어 즉시 올립니다."""
     import time
+
+    # 포그라운드(사용자) 조회면 '방금 사용 중'으로 기록 → 백그라운드 워커가 양보하게.
+    if not _is_background_thread():
+        _foreground_last[0] = _time.monotonic()
 
     last = None
     for attempt in range(attempts):

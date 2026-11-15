@@ -21,9 +21,12 @@ _lock = threading.Lock()
 _stats = {"filled": 0, "last_run": None, "running": False, "remaining_hint": None}
 
 SETTING_KEY = "cost_prefetch_enabled"   # 'off'면 끔. 기본 켜짐.
-_GAP_SEC = 6.0        # 건당 최소 간격(조용히)
+_GAP_SEC = 7.0        # 건당 최소 간격(조용히)
 _EMPTY_SLEEP = 300.0  # 채울 게 없으면 5분 쉬었다 다시 확인
 _BATCH = 20
+# ★사용자가 '방금' 퀵스타를 썼으면(이 시간 안이면) 백그라운드는 양보(대기)합니다.
+#   그래야 GR 자동채움·송장 자동입력 같은 사용자 작업이 한도를 먼저 쓰고 안 느려집니다.
+_YIELD_SEC = 30.0
 
 
 def is_enabled() -> bool:
@@ -55,11 +58,19 @@ def _run() -> None:
     from services import ledger_match
     from services.ledger_upload_service import _extract_costs
 
+    # ★이 스레드의 퀵스타 호출은 '백그라운드'로 표시 → 포그라운드 우선권에서 제외.
+    quickstar_client.mark_this_thread_background()
+
     _stats["running"] = True
     while True:
         try:
             if not is_enabled():
                 time.sleep(_EMPTY_SLEEP)
+                continue
+
+            # ★사용자가 방금 퀵스타를 썼으면(GR채움·송장입력 등) 양보: 조용해질 때까지 대기.
+            if quickstar_client.seconds_since_foreground_call() < _YIELD_SEC:
+                time.sleep(_YIELD_SEC)
                 continue
 
             # 포그라운드 수집이 돌면 한 박자 쉬어 양보(퀵스타/DB 부담 분산)
@@ -79,6 +90,9 @@ def _run() -> None:
 
             for gr in grs:
                 if not is_enabled():
+                    break
+                # 배치 도중에도 사용자가 쓰기 시작하면 즉시 양보(남은 배치 중단).
+                if quickstar_client.seconds_since_foreground_call() < _YIELD_SEC:
                     break
                 try:
                     data = (quickstar_client.fetch_application(gr) or {}).get("data") or {}  # 전역 쓰로틀 적용됨
