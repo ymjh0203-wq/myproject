@@ -531,10 +531,10 @@ def _run_gr_fill_ready_to_ship(selected_orders=None) -> None:
     def _prog(page, total):
         ph.info(f"신청내역 조회 중... {page}페이지 · 누적 신청서 {total}건")
 
-    with st.spinner(f"퀵스타 신청내역(최근 1주일)을 읽어 {_scope_txt}에 GR번호를 채우는 중입니다..."):
+    with st.spinner(f"퀵스타 신청내역(최근 3일)을 읽어 {_scope_txt}에 GR번호를 채우는 중입니다..."):
         # 조회 도중 배경 자동수집 완료 새로고침이 이 긴 작업을 끊지 않게 억제.
         with common.suppress_bg_rerun():
-            report = gr_backfill_service.backfill_gr_for_ready_to_ship(days_back=7, progress=_prog, only_order_ids=only_ids)
+            report = gr_backfill_service.backfill_gr_for_ready_to_ship(days_back=3, progress=_prog, only_order_ids=only_ids)
     ph.empty()
 
     if not report.get("ok"):
@@ -547,7 +547,7 @@ def _run_gr_fill_ready_to_ship(selected_orders=None) -> None:
         return
 
     st.success(
-        f"GR 채우기 완료 — 최근 1주일 신청내역 {report['apps']}건 읽음 · 대상 발송대기 {report['orders_scanned']}건 중 "
+        f"GR 채우기 완료 — 최근 3일 신청내역 {report['apps']}건 읽음 · 대상 발송대기 {report['orders_scanned']}건 중 "
         f"**{report['updated']}건에 GR 채움** "
         f"(수령자명 {report['matched_receiver']} · 구매자명 {report['matched_buyer']} · 정밀조회 {report.get('matched_recinfo', 0)}). "
         f"· 동명이인 확정불가 {report['ambiguous']}건 · 신청내역에 이름 없음 {report['no_match']}건"
@@ -556,8 +556,8 @@ def _run_gr_fill_ready_to_ship(selected_orders=None) -> None:
         st.rerun()
     elif report["no_match"] and report["ambiguous"] == 0:
         st.info(
-            "채워진 게 없습니다. 대부분 '최근 1주일 신청내역'에 그 이름이 없어서일 수 있습니다. "
-            "배대지 신청서를 1주일보다 전에 만드셨다면 알려주세요(기간을 늘리겠습니다)."
+            "채워진 게 없습니다. 대부분 '최근 3일 신청내역'에 그 이름이 없어서일 수 있습니다. "
+            "배대지 신청서를 3일보다 전에 만드셨다면 알려주세요(기간을 늘리겠습니다)."
         )
 
 
@@ -698,7 +698,7 @@ def render() -> None:
     with _gb1:
         gr_fill_clicked = st.button(
             "🧩 GR 채우기", width="stretch", on_click=_suppress_bg_on_click,
-            help="퀵스타 신청내역(최근 1주일)을 읽어, GR 없는 발송대기 주문을 이름(수령자/구매자)+전화+통관번호로 "
+            help="퀵스타 신청내역(최근 3일)을 읽어, GR 없는 발송대기 주문을 이름(수령자/구매자)+전화+통관번호로 "
                  "매칭해 GR을 채웁니다. 표에서 체크한 주문이 있으면 그것만, 없으면 발송대기 전체가 대상. "
                  "채워지면 송장번호(가송장)가 자동으로 뜸. 퀵스타 자동화 크롬 로그인 필요.",
         )
