@@ -109,7 +109,44 @@ def fetch_tracking_for_orders(orders: list, progress=None) -> dict:
         else:
             not_ready += 1
 
-    # ---- 1차: 전체 조회 ----
+    def _result():
+        return {
+            "ok": True, "matched": matched, "scanned": scanned, "with_gr": with_gr,
+            "no_gr": no_gr, "filled": filled, "not_ready": not_ready,
+            "errors": errors, "error_samples": error_samples,
+        }
+
+    # ---- 빠른 길: 퀵스타 '웹 신청내역'을 한 번에 읽어 GR→운송장으로 채웁니다 ----
+    #   ★배대지 조회 API는 '분당 10회' 제한이라 GR마다 하나씩이면 느립니다. GR 채움과 똑같이
+    #     웹 신청내역(최근 3일)을 한 번에 읽어 GR→운송장(가송장)으로 매칭하면 훨씬 빠릅니다.
+    #     (가송장은 CJ대한통운 → 택배사 CJGLS. 웹 로그인이 안 돼 있거나 실패하면 아래 API 방식으로.)
+    if any(str(o.get("gr") or "").strip() for o in orders):
+        web_map = None
+        try:
+            from integrations import quickstar_automation
+            listing = quickstar_automation.fetch_all_applications(days_back=3)
+            if listing.get("ok"):
+                web_map = {}
+                for a in (listing.get("rows") or []):
+                    g = str(a.get("gr") or "").strip()
+                    inv = str(a.get("invoice") or "").strip()
+                    if g and inv and g not in web_map:
+                        web_map[g] = inv
+        except Exception:  # noqa: BLE001
+            web_map = None
+        if web_map is not None:
+            for i, o in enumerate(orders):
+                scanned += 1
+                gr = str(o.get("gr") or "").strip()
+                if not gr:
+                    no_gr += 1
+                else:
+                    with_gr += 1
+                    _apply_success(o, DEFAULT_COUPANG_COURIER, web_map.get(gr))
+                _progress(progress, i, orders)
+            return _result()
+
+    # ---- (폴백) 웹이 안 되면 기존 API 방식(분당 10회, GR마다 조회) ----
     errored = []  # 이번에 오류난 주문(잠시 뒤 1회 재시도)
     for i, o in enumerate(orders):
         scanned += 1
