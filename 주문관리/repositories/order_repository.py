@@ -1155,6 +1155,52 @@ def monthly_sales_detailed(exclude_closed: bool = True) -> list:
         connection.close()
 
 
+def monthly_top_products(month: str, market: str = None, exclude_closed: bool = True,
+                         sort_by: str = "qty", limit: int = 100) -> list:
+    """결제일(paid_at) 기준 그 달(month='YYYY-MM')에 '잘 팔린 상품'을 집계합니다.
+    상품명으로 묶어 판매수량·매출·주문건수를 돌려줍니다(기본: 수량 많은 순).
+      - market: 특정 상점만. None/'전체'면 전체.
+      - exclude_closed: 취소·반품(주문종료) 제외(기본).
+      - sort_by: 'qty'(수량) 또는 'sales'(매출).
+    반환: [{"상품명","수량","매출","건수","평균단가"}, ...]"""
+    order_col = "매출" if sort_by == "sales" else "수량"
+    where = ["substr(o.paid_at, 1, 7) = ?", "o.paid_at IS NOT NULL", "o.paid_at != ''"]
+    params = [month]
+    if exclude_closed:
+        where.append("o.work_status != '주문종료(취소·반품 등)'")
+    if market and market != "전체":
+        where.append("ma.market_name = ?")
+        params.append(market)
+    params.append(int(limit))
+    connection = get_connection()
+    try:
+        rows = connection.execute(
+            f"""
+            SELECT oi.product_name AS 상품명,
+                   SUM(oi.quantity) AS 수량,
+                   SUM(oi.sales_amount) AS 매출,
+                   COUNT(DISTINCT o.id) AS 건수
+            FROM order_items oi
+            JOIN orders o ON o.id = oi.order_id
+            LEFT JOIN market_accounts ma ON ma.id = o.market_account_id
+            WHERE {' AND '.join(where)}
+            GROUP BY oi.product_name
+            ORDER BY {order_col} DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            qty = d.get("수량") or 0
+            d["평균단가"] = int(round((d.get("매출") or 0) / qty)) if qty else 0
+            out.append(d)
+        return out
+    finally:
+        connection.close()
+
+
 def daily_sales_detailed(month: str, exclude_closed: bool = True) -> list:
     """
     결제일(paid_at) 기준으로 '일자 × 상점(마켓 계정)'별 매출을 집계합니다.

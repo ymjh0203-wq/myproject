@@ -7,10 +7,13 @@
 #   - 그래프 너비·높이 조절
 # ==========================================================
 
+import io
+
 import pandas as pd
 import streamlit as st
 
 from repositories import order_repository
+from ui import common
 
 _METRIC_COLS = ["건수", "판매금액", "수수료", "정산금액", "배송비"]
 _BLUE = ["#1D4ED8", "#60A5FA"]  # 판매금액(진), 정산금액(연)
@@ -149,3 +152,51 @@ def render() -> None:
             st.dataframe(
                 _fmt_table(by_day.sort_values("일자", ascending=False)), width="stretch", hide_index=True
             )
+
+    # ===== 🏆 월별 '잘 팔리는 상품' (베스트셀러) =====
+    st.divider()
+    st.subheader("🏆 월별 베스트 상품")
+    st.caption("그 달에 많이 팔린 상품을 상품명으로 묶어 **판매수량·매출·주문건수**로 보여줍니다. (결제일 기준)")
+    bc = st.columns([2, 2, 1.4])
+    with bc[0]:
+        bs_month = st.selectbox("월", list(reversed(all_months)), key="ms_best_month")
+    with bc[1]:
+        bs_sort_label = st.radio("정렬", ["판매수량순", "매출순"], horizontal=True, key="ms_best_sort")
+    with bc[2]:
+        bs_topn = st.number_input("상위 N개", min_value=5, max_value=300, value=30, step=5, key="ms_best_topn")
+
+    best = order_repository.monthly_top_products(
+        bs_month,
+        market=(None if sel_market == "전체" else sel_market),
+        exclude_closed=not include_closed,
+        sort_by=("sales" if bs_sort_label == "매출순" else "qty"),
+        limit=int(bs_topn),
+    )
+    if not best:
+        st.info(f"{bs_month}에 집계할 상품이 없습니다.")
+    else:
+        bdf = pd.DataFrame(best)[["상품명", "수량", "매출", "건수", "평균단가"]]
+        bdf.insert(0, "순위", range(1, len(bdf) + 1))
+        st.caption(
+            f"{bs_month} · {sel_market} · {bs_sort_label} 상위 {len(bdf)}개 "
+            f"(취소·반품 {'포함' if include_closed else '제외'})"
+        )
+        show = bdf.copy()
+        show["수량"] = show["수량"].map(lambda x: f"{int(x or 0):,}")
+        show["건수"] = show["건수"].map(lambda x: f"{int(x or 0):,}")
+        show["매출"] = show["매출"].map(_won)
+        show["평균단가"] = show["평균단가"].map(_won)
+        st.dataframe(show, width="stretch", hide_index=True)
+
+        try:
+            _buf = io.BytesIO()
+            with pd.ExcelWriter(_buf, engine="openpyxl") as _xw:
+                bdf.to_excel(_xw, index=False, sheet_name="베스트상품")
+            common.excel_download_or_save(
+                "⬇️ 베스트 상품 엑셀 내려받기",
+                common._style_excel(_buf.getvalue()),
+                f"베스트상품_{bs_month}_{sel_market}.xlsx",
+                key="ms_best_dl",
+            )
+        except Exception:  # noqa: BLE001
+            pass
