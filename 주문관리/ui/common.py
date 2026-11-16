@@ -456,6 +456,28 @@ def open_in_chrome(url: str) -> bool:
     return True
 
 
+def _find_whale() -> str:
+    """이 컴퓨터에 설치된 네이버 웨일 실행 파일 경로를 찾습니다. 없으면 None."""
+    candidates = [
+        os.path.expandvars(r"%ProgramFiles%\Naver\Naver Whale\Application\whale.exe"),
+        os.path.expandvars(r"%ProgramFiles(x86)%\Naver\Naver Whale\Application\whale.exe"),
+        os.path.expandvars(r"%LocalAppData%\Naver\Naver Whale\Application\whale.exe"),
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def open_in_whale(url: str) -> bool:
+    """주어진 주소를 네이버 웨일에서 엽니다. 웨일이 없으면 False를 돌려줍니다."""
+    whale = _find_whale()
+    if not whale or not url:
+        return False
+    subprocess.Popen([whale, url])
+    return True
+
+
 def format_quantity(items: list) -> int:
     return sum(item["quantity"] or 0 for item in items)
 
@@ -1678,6 +1700,14 @@ def render_full_detail(order: dict, reveal: bool, with_cs_memo: bool = True) -> 
             if not open_in_chrome(info["url"]):
                 # 크롬이 없으면 주소를 보여줘서 직접 열 수 있게 합니다.
                 st.warning("크롬을 찾지 못했습니다. 아래 주소를 복사해 여세요.")
+                st.code(info["url"])
+        # 같은 상품 페이지를 '네이버 웨일'로도 열 수 있게 바로 아래에 둡니다.
+        wlabel = "🔗 웨일로 쿠팡 상품 페이지 열기"
+        if len(link_infos) > 1:
+            wlabel += f" (상품 {index + 1})"
+        if st.button(wlabel, key=f"open_whale_{order['id']}_{index}", type="secondary"):
+            if not open_in_whale(info["url"]):
+                st.warning("네이버 웨일을 찾지 못했습니다. 웨일을 설치했는지 확인하거나 아래 주소를 복사해 여세요.")
                 st.code(info["url"])
         if info["코드표시"]:
             st.caption(f"쿠팡상품번호: {info['코드표시']}")
